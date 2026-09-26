@@ -28,7 +28,7 @@ try {
 
     self.postMessage({
         type: "status",
-        text: "Carregando LFM2..."
+        text: "Baixando LFM2..."
     });
 
     const generator =
@@ -37,7 +37,35 @@ try {
             "onnx-community/LFM2-350M-ONNX",
             {
                 device: "wasm",
-                dtype: "fp16"
+                dtype: "fp16",
+
+                progress_callback: (progress) => {
+
+                    if (
+                        progress &&
+                        progress.status === "progress"
+                    ) {
+
+                        const percent =
+                            Number.isFinite(
+                                progress.progress
+                            )
+                                ? progress.progress
+                                : 0;
+
+                        const file =
+                            progress.file ||
+                            "modelo";
+
+                        self.postMessage({
+                            type: "progress",
+                            file: file,
+                            progress: percent
+                        });
+
+                    }
+
+                }
             }
         );
 
