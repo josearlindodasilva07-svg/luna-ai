@@ -2,10 +2,8 @@ import {
     pipeline
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
-
 const MODEL =
-    "HuggingFaceTB/SmolLM2-360M-Instruct";
-
+    "PengZhang424242/SmolLM2-360M-Instruct-ONNX";
 
 const PERSONALITY = `
 Você é uma inteligência artificial chamada Luna.
@@ -30,11 +28,8 @@ Se não souber algo, diga que não sabe.
 Responda de maneira natural e fácil de entender.
 `;
 
-
 let generator = null;
-
 let generating = false;
-
 
 const chat =
     document.getElementById("chat");
@@ -60,22 +55,12 @@ let memory = JSON.parse(
     localStorage.getItem("luna_memory") || "{}"
 );
 
-
-/* =========================
-   HISTÓRICO
-========================= */
-
 let history = JSON.parse(
     localStorage.getItem("luna_history") || "[]"
 );
 
 
-/* =========================
-   SALVAR MEMÓRIA
-========================= */
-
 function saveMemory() {
-
     localStorage.setItem(
         "luna_memory",
         JSON.stringify(memory)
@@ -83,12 +68,7 @@ function saveMemory() {
 }
 
 
-/* =========================
-   SALVAR HISTÓRICO
-========================= */
-
 function saveHistory() {
-
     localStorage.setItem(
         "luna_history",
         JSON.stringify(history)
@@ -97,14 +77,13 @@ function saveHistory() {
 
 
 /* =========================
-   MOSTRAR MENSAGEM
+   CHAT
 ========================= */
 
 function addMessage(
     text,
     type
 ) {
-
     const element =
         document.createElement("div");
 
@@ -136,7 +115,6 @@ function loadHistory() {
 
         addMessage(
             message.content,
-
             message.role === "user"
                 ? "user"
                 : "ai"
@@ -146,25 +124,130 @@ function loadHistory() {
 
 
 /* =========================
-   CARREGAR IA
+   CARREGAR MODELO
 ========================= */
 
 async function loadModel() {
 
     status.textContent =
-        "Baixando IA...";
+        "Preparando IA...";
 
-    generator =
-        await pipeline(
-            "text-generation",
-            MODEL,
-            {
-                device: "webgpu"
-            }
+    try {
+
+        let device;
+
+        /*
+         * Se o navegador tiver WebGPU,
+         * tenta usar a GPU.
+         *
+         * Caso contrário,
+         * usa WASM/CPU.
+         */
+
+        if (
+            typeof navigator !== "undefined" &&
+            navigator.gpu
+        ) {
+
+            device = "webgpu";
+
+            status.textContent =
+                "Iniciando IA pela GPU...";
+
+        } else {
+
+            device = "wasm";
+
+            status.textContent =
+                "Iniciando IA pela CPU...";
+
+        }
+
+
+        generator =
+            await pipeline(
+                "text-generation",
+                MODEL,
+                {
+                    device: device,
+                    dtype: "q4",
+
+                    progress_callback:
+                        (progress) => {
+
+                            if (
+                                progress &&
+                                progress.status === "progress"
+                            ) {
+
+                                const value =
+                                    Number(
+                                        progress.progress
+                                    );
+
+                                if (
+                                    Number.isFinite(value)
+                                ) {
+
+                                    status.textContent =
+                                        `Baixando IA... ${Math.round(value)}%`;
+
+                                } else {
+
+                                    status.textContent =
+                                        "Baixando IA...";
+
+                                }
+
+                            }
+
+                            else if (
+                                progress &&
+                                progress.status === "initiate"
+                            ) {
+
+                                status.textContent =
+                                    "Iniciando download...";
+
+                            }
+
+                            else if (
+                                progress &&
+                                progress.status === "done"
+                            ) {
+
+                                status.textContent =
+                                    "Finalizando IA...";
+
+                            }
+                        }
+                }
+            );
+
+
+        status.textContent =
+            device === "webgpu"
+                ? "Online - GPU"
+                : "Online - CPU";
+
+
+    } catch (error) {
+
+        console.error(
+            "Erro ao carregar Luna:",
+            error
         );
 
-    status.textContent =
-        "Online";
+        generator = null;
+
+        status.textContent =
+            "Erro ao carregar IA";
+
+        addMessage(
+            "A Luna não conseguiu carregar a IA. Recarregue a página e tente novamente.",
+            "ai"
+        );
+    }
 }
 
 
@@ -183,29 +266,27 @@ async function generate(
         return;
     }
 
+
     generating = true;
 
     sendButton.disabled = true;
 
 
     /*
-       SALVAR USUÁRIO
-    */
+     * Salva mensagem do usuário
+     */
 
     history.push({
-
         role: "user",
-
         content: userMessage
     });
-
 
     saveHistory();
 
 
     /*
-       MEMÓRIA
-    */
+     * Memória
+     */
 
     const memoryText =
         Object.keys(memory).length
@@ -214,16 +295,16 @@ async function generate(
 
 
     /*
-       PEGAR ÚLTIMAS MENSAGENS
-    */
+     * Últimas mensagens
+     */
 
     const recentHistory =
         history.slice(-12);
 
 
     /*
-       CONTEXTO
-    */
+     * Mensagens enviadas para a IA
+     */
 
     const messages = [
 
@@ -232,22 +313,29 @@ async function generate(
 
             content:
                 PERSONALITY +
-
                 `
 
-Memória:
+Memória da Luna:
 
 ${memoryText}
 `
         },
 
         ...recentHistory
+
     ];
 
 
     /*
-       GERAR
-    */
+     * Mostra que está pensando
+     */
+
+    const thinking =
+        addMessage(
+            "Pensando...",
+            "ai"
+        );
+
 
     try {
 
@@ -267,6 +355,11 @@ ${memoryText}
         let answer = "";
 
 
+        /*
+         * Transformers.js retorna
+         * generated_text.
+         */
+
         if (
             output &&
             output[0]
@@ -275,6 +368,12 @@ ${memoryText}
             const generated =
                 output[0].generated_text;
 
+
+            /*
+             * Modelos de chat
+             * normalmente retornam
+             * uma lista de mensagens.
+             */
 
             if (
                 Array.isArray(
@@ -292,47 +391,94 @@ ${memoryText}
                     typeof last === "string"
                 ) {
 
-                    answer = last;
+                    answer =
+                        last;
 
-                } else {
+                }
+
+                else if (
+                    last &&
+                    typeof last.content === "string"
+                ) {
 
                     answer =
-                        last.content || "";
+                        last.content;
                 }
+
+            }
+
+            /*
+             * Caso o modelo retorne
+             * texto diretamente.
+             */
+
+            else if (
+                typeof generated === "string"
+            ) {
+
+                answer =
+                    generated;
             }
         }
 
 
-        if (!answer) {
+        /*
+         * Se não conseguiu encontrar
+         * a resposta.
+         */
+
+        if (
+            !answer ||
+            !answer.trim()
+        ) {
 
             answer =
                 "Não consegui gerar uma resposta.";
         }
 
 
+        /*
+         * Remove o "Pensando..."
+         */
+
+        thinking.remove();
+
+
+        /*
+         * Mostra resposta
+         */
+
         addMessage(
-            answer,
+            answer.trim(),
             "ai"
         );
 
 
+        /*
+         * Salva resposta
+         */
+
         history.push({
-
             role: "assistant",
-
-            content: answer
+            content: answer.trim()
         });
-
 
         saveHistory();
 
 
     } catch (error) {
 
-        console.error(error);
+        console.error(
+            "Erro ao gerar resposta:",
+            error
+        );
+
+
+        thinking.remove();
+
 
         addMessage(
-            "Erro ao gerar resposta.",
+            "Deu erro enquanto eu tentava responder.",
             "ai"
         );
     }
@@ -341,11 +487,13 @@ ${memoryText}
     generating = false;
 
     sendButton.disabled = false;
+
+    input.focus();
 }
 
 
 /* =========================
-   ENVIAR
+   BOTÃO ENVIAR
 ========================= */
 
 sendButton.addEventListener(
@@ -357,6 +505,22 @@ sendButton.addEventListener(
 
 
         if (!message) {
+            return;
+        }
+
+
+        /*
+         * Se a IA ainda não carregou,
+         * não tenta gerar.
+         */
+
+        if (!generator) {
+
+            addMessage(
+                "A Luna ainda está carregando. Aguarde terminar.",
+                "ai"
+            );
+
             return;
         }
 
@@ -378,7 +542,7 @@ sendButton.addEventListener(
 
 
 /* =========================
-   ENTER
+   ENTER PARA ENVIAR
 ========================= */
 
 input.addEventListener(
@@ -399,7 +563,7 @@ input.addEventListener(
 
 
 /* =========================
-   LIMPAR CHAT
+   LIMPAR CONVERSA
 ========================= */
 
 clearButton.addEventListener(
@@ -416,29 +580,24 @@ clearButton.addEventListener(
 
 
 /* =========================
-   INICIAR
+   INICIAR LUNA
 ========================= */
 
 async function start() {
 
+    /*
+     * Primeiro mostra
+     * o histórico antigo.
+     */
+
     loadHistory();
 
-    try {
 
-        await loadModel();
+    /*
+     * Depois carrega a IA.
+     */
 
-    } catch (error) {
-
-        console.error(error);
-
-        status.textContent =
-            "WebGPU não disponível";
-
-        addMessage(
-            "Seu navegador não conseguiu iniciar a IA pela GPU.",
-            "ai"
-        );
-    }
+    await loadModel();
 }
 
 
