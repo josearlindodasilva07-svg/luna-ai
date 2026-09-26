@@ -4,7 +4,7 @@ const MODEL =
 const TRANSFORMERS_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
-const MAX_NEW_TOKENS = 48;
+const MAX_NEW_TOKENS = 24;
 const MAX_PROMPT_CHARS = 2400;
 const MAX_MEMORY_CHARS = 500;
 const MAX_STORED_MESSAGES = 200;
@@ -235,24 +235,61 @@ const workerSource = `
             self.postMessage({ type: "load-start" });
 
             try {
+                const progress_callback = progress => {
+                    if (progress) {
+                        self.postMessage({
+                            type: "progress",
+                            progress
+                        });
+                    }
+                };
+
+                /*
+                 * No POCO/Chrome, WebGPU deve ser o primeiro caminho:
+                 * ele evita a saturação do CPU causada pelo decoder WASM.
+                 * Se WebGPU não estiver disponível, usa o mesmo modelo
+                 * local em WASM, mas dentro deste worker.
+                 */
+                if (self.navigator && self.navigator.gpu) {
+                    try {
+                        generator = await pipeline(
+                            "text-generation",
+                            message.model,
+                            {
+                                device: "webgpu",
+                                dtype: "q4f16",
+                                progress_callback
+                            }
+                        );
+
+                        self.postMessage({
+                            type: "ready",
+                            backend: "WebGPU"
+                        });
+                        return;
+                    } catch (webgpuError) {
+                        console.warn(
+                            "WebGPU indisponível; usando WASM.",
+                            webgpuError
+                        );
+                        generator = null;
+                    }
+                }
+
                 generator = await pipeline(
                     "text-generation",
                     message.model,
                     {
                         device: "wasm",
                         dtype: "q4",
-                        progress_callback: progress => {
-                            if (progress) {
-                                self.postMessage({
-                                    type: "progress",
-                                    progress
-                                });
-                            }
-                        }
+                        progress_callback
                     }
                 );
 
-                self.postMessage({ type: "ready" });
+                self.postMessage({
+                    type: "ready",
+                    backend: "WASM worker"
+                });
             } catch (error) {
                 self.postMessage({
                     type: "load-error",
@@ -346,7 +383,9 @@ function handleWorkerMessage(event) {
     if (message.type === "ready") {
         loading = false;
         workerReady = true;
-        setStatus("Online - worker local");
+        setStatus(
+            `Online - ${message.backend || "worker local"}`
+        );
         addMessage("Luna está online.", "ai");
         return;
     }
@@ -399,7 +438,7 @@ function handleWorkerError(event) {
         setBusy(false);
     }
 
-    setStatus("Worker de IA indisponível");
+        setStatus("Worker de IA indisponível");
 }
 
 function requestGeneration(messages) {
