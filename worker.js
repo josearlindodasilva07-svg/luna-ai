@@ -17,30 +17,27 @@ try {
         "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0"
     );
 
-    self.postMessage({
-        type: "status",
-        text: "Transformers.js carregado"
-    });
-
     env.allowLocalModels = false;
     env.allowRemoteModels = true;
     env.useBrowserCache = true;
 
     self.postMessage({
         type: "status",
-        text: "Iniciando modelo..."
+        text: "Transformers.js carregado"
     });
 
-    const MODEL =
-        "onnx-community/LFM2.5-350M-ONNX";
+    self.postMessage({
+        type: "status",
+        text: "Carregando modelo FP16..."
+    });
 
     const generator =
         await pipeline(
             "text-generation",
-            MODEL,
+            "onnx-community/LFM2.5-350M-ONNX",
             {
                 device: "wasm",
-                dtype: "q8"
+                dtype: "fp16"
             }
         );
 
