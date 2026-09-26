@@ -1,8 +1,5 @@
-const WEBGPU_MODEL =
+const MODEL =
     "onnx-community/Qwen2.5-0.5B-Instruct";
-
-const WASM_FALLBACK_MODEL =
-    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
 
 const TRANSFORMERS_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
@@ -247,51 +244,26 @@ const workerSource = `
                     }
                 };
 
-                /*
-                 * No POCO/Chrome, WebGPU deve ser o primeiro caminho:
-                 * ele evita a saturação do CPU causada pelo decoder WASM.
-                 * Se WebGPU não estiver disponível, usa o mesmo modelo
-                 * local em WASM, mas dentro deste worker.
-                 */
-                if (self.navigator && self.navigator.gpu) {
-                    try {
-                        generator = await pipeline(
-                            "text-generation",
-                            message.webgpuModel,
-                            {
-                                device: "webgpu",
-                                dtype: "q4f16",
-                                progress_callback
-                            }
-                        );
-
-                        self.postMessage({
-                            type: "ready",
-                            backend: "WebGPU / Qwen2.5"
-                        });
-                        return;
-                    } catch (webgpuError) {
-                        console.warn(
-                            "WebGPU indisponível; usando WASM.",
-                            webgpuError
-                        );
-                        generator = null;
-                    }
+                if (!self.navigator || !self.navigator.gpu) {
+                    throw new Error(
+                        "WebGPU não está disponível neste Chrome Android. " +
+                        "A Luna foi interrompida para não gerar texto corrompido."
+                    );
                 }
 
                 generator = await pipeline(
                     "text-generation",
-                    message.wasmFallbackModel,
+                    message.model,
                     {
-                        device: "wasm",
-                        dtype: "q4",
+                        device: "webgpu",
+                        dtype: "q4f16",
                         progress_callback
                     }
                 );
 
                 self.postMessage({
                     type: "ready",
-                    backend: "WASM worker / modelo reduzido"
+                    backend: "WebGPU / Qwen2.5"
                 });
             } catch (error) {
                 self.postMessage({
@@ -560,8 +532,7 @@ async function start() {
 
     inferenceWorker.postMessage({
         type: "load",
-            webgpuModel: WEBGPU_MODEL,
-            wasmFallbackModel: WASM_FALLBACK_MODEL
+            model: MODEL
     });
 }
 
