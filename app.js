@@ -24,7 +24,7 @@ let generating = false;
 
 const worker =
     new Worker(
-        "./worker.js?v=25",
+        "./worker.js?v=26",
         {
             type: "module"
         }
@@ -87,7 +87,7 @@ worker.onerror =
         );
 
         addMessage(
-            "ERRO NO WORKER:\n" +
+            "ERRO NO WORKER:\n\n" +
             (
                 event.message ||
                 "Não foi possível iniciar o Worker."
@@ -113,6 +113,10 @@ worker.onmessage =
             event.data;
 
 
+        /* ----------------------------------------------------
+           STATUS
+        ---------------------------------------------------- */
+
         if (
             data.type === "status"
         ) {
@@ -124,6 +128,46 @@ worker.onmessage =
             return;
         }
 
+
+        /* ----------------------------------------------------
+           PROGRESSO DO DOWNLOAD
+        ---------------------------------------------------- */
+
+        if (
+            data.type === "progress"
+        ) {
+
+            const percent =
+                Number.isFinite(
+                    data.progress
+                )
+                    ? data.progress
+                    : 0;
+
+
+            const rounded =
+                Math.max(
+                    0,
+                    Math.min(
+                        100,
+                        Math.round(percent)
+                    )
+                );
+
+
+            setStatus(
+                "Baixando LFM2... " +
+                rounded +
+                "%"
+            );
+
+            return;
+        }
+
+
+        /* ----------------------------------------------------
+           MODELO CARREGADO
+        ---------------------------------------------------- */
 
         if (
             data.type === "loaded"
@@ -145,6 +189,10 @@ worker.onmessage =
             return;
         }
 
+
+        /* ----------------------------------------------------
+           RESULTADO
+        ---------------------------------------------------- */
 
         if (
             data.type === "result"
@@ -172,6 +220,10 @@ worker.onmessage =
             return;
         }
 
+
+        /* ----------------------------------------------------
+           ERRO
+        ---------------------------------------------------- */
 
         if (
             data.type === "error"
@@ -215,12 +267,16 @@ worker.onmessage =
 
 function sendMessage() {
 
-    if (generating) {
+    if (
+        generating
+    ) {
         return;
     }
 
 
-    if (!modelReady) {
+    if (
+        !modelReady
+    ) {
 
         addMessage(
             "A Luna ainda está carregando.",
@@ -235,7 +291,9 @@ function sendMessage() {
         input.value.trim();
 
 
-    if (!text) {
+    if (
+        !text
+    ) {
         return;
     }
 
