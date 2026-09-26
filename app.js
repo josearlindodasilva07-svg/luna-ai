@@ -1,4 +1,7 @@
-const MODEL =
+const WEBGPU_MODEL =
+    "onnx-community/Qwen2.5-0.5B-Instruct";
+
+const WASM_FALLBACK_MODEL =
     "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
 
 const TRANSFORMERS_URL =
@@ -254,7 +257,7 @@ const workerSource = `
                     try {
                         generator = await pipeline(
                             "text-generation",
-                            message.model,
+                            message.webgpuModel,
                             {
                                 device: "webgpu",
                                 dtype: "q4f16",
@@ -264,7 +267,7 @@ const workerSource = `
 
                         self.postMessage({
                             type: "ready",
-                            backend: "WebGPU"
+                            backend: "WebGPU / Qwen2.5"
                         });
                         return;
                     } catch (webgpuError) {
@@ -278,7 +281,7 @@ const workerSource = `
 
                 generator = await pipeline(
                     "text-generation",
-                    message.model,
+                    message.wasmFallbackModel,
                     {
                         device: "wasm",
                         dtype: "q4",
@@ -288,7 +291,7 @@ const workerSource = `
 
                 self.postMessage({
                     type: "ready",
-                    backend: "WASM worker"
+                    backend: "WASM worker / modelo reduzido"
                 });
             } catch (error) {
                 self.postMessage({
@@ -313,7 +316,11 @@ const workerSource = `
                 message.messages,
                 {
                     max_new_tokens: message.maxNewTokens,
-                    do_sample: false,
+                    do_sample: true,
+                    temperature: 0.7,
+                    top_p: 0.9,
+                    top_k: 40,
+                    repetition_penalty: 1.15,
                     return_full_text: false,
                     use_cache: true
                 }
@@ -553,7 +560,8 @@ async function start() {
 
     inferenceWorker.postMessage({
         type: "load",
-        model: MODEL
+            webgpuModel: WEBGPU_MODEL,
+            wasmFallbackModel: WASM_FALLBACK_MODEL
     });
 }
 
