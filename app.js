@@ -256,7 +256,9 @@ const workerSource = `
                     message.model,
                     {
                         device: "webgpu",
-                        dtype: "q4f16",
+                        /* q4f16 está produzindo tokens inválidos neste runtime.
+                         * q8 usa mais memória, mas preserva os logits do Qwen. */
+                        dtype: "q8",
                         progress_callback
                     }
                 );
@@ -288,11 +290,8 @@ const workerSource = `
                 message.messages,
                 {
                     max_new_tokens: message.maxNewTokens,
-                    do_sample: true,
-                    temperature: 0.7,
-                    top_p: 0.9,
-                    top_k: 40,
-                    repetition_penalty: 1.15,
+                    do_sample: false,
+                    repetition_penalty: 1.1,
                     return_full_text: false,
                     use_cache: true
                 }
