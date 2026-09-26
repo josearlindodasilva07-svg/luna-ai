@@ -3,1097 +3,257 @@ import {
     env
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
-
-/* =========================================================
-   CONFIGURAÇÃO
-   ========================================================= */
-
 const MODEL =
-    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX-MHA";
 
-const TRANSFORMERS_URL =
-    "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
-
-const MAX_NEW_TOKENS = 24;
-
-const MAX_STORED_MESSAGES = 200;
-
-
-/* =========================================================
-   PERSONALIDADE
-   ========================================================= */
+env.backends.onnx.wasm.numThreads = 1;
+env.backends.onnx.wasm.proxy = false;
 
 const PERSONALITY = `
 Você é Luna, uma inteligência artificial.
 
 Você conversa em português brasileiro.
 
-Responda de forma:
+Sua personalidade:
 - natural
+- inteligente
 - direta
 - amigável
-- breve
+- curiosa
+- paciente
 
-Use palavras normais.
-
-Não invente palavras.
-Não repita frases.
-Não copie a pergunta do usuário.
-
-Se não souber algo, diga que não sabe.
-
-Responda somente à mensagem do usuário.
+Regras:
+- Responda em português brasileiro.
+- Responda de forma natural.
+- Use frases claras e fáceis de entender.
+- Não repita palavras ou frases sem necessidade.
+- Não invente informações.
+- Se não souber algo, diga que não sabe.
+- Não fique repetindo a pergunta do usuário.
+- Não faça listas quando uma resposta normal for melhor.
+- Não fale sobre seu funcionamento interno, a menos que o usuário pergunte.
+- Você não é uma pessoa humana.
 `;
 
+let generator = null;
+let generating = false;
 
-/* =========================================================
-   ELEMENTOS
-   ========================================================= */
+const chat = document.getElementById("chat");
+const input = document.getElementById("messageInput");
+const sendButton = document.getElementById("sendButton");
+const clearButton = document.getElementById("clearButton");
+const status = document.getElementById("status");
 
-const chat =
-    document.getElementById("chat");
+let memory = JSON.parse(
+    localStorage.getItem("luna_memory") || "{}"
+);
 
-const input =
-    document.getElementById("messageInput");
+let history = JSON.parse(
+    localStorage.getItem("luna_history") || "[]"
+);
 
-const sendButton =
-    document.getElementById("sendButton");
-
-const clearButton =
-    document.getElementById("clearButton");
-
-const status =
-    document.getElementById("status");
-
-
-/* =========================================================
-   ESTADO
-   ========================================================= */
-
-let history =
-    loadHistory();
-
-let worker =
-    null;
-
-let workerUrl =
-    null;
-
-let workerReady =
-    false;
-
-let loading =
-    false;
-
-let generating =
-    false;
-
-let requestId =
-    0;
-
-let pending =
-    new Map();
-
-
-/* =========================================================
-   HISTÓRICO
-   ========================================================= */
-
-function loadHistory() {
-
-    try {
-
-        const value =
-            JSON.parse(
-                localStorage.getItem(
-                    "luna_history"
-                ) || "[]"
-            );
-
-        if (
-            Array.isArray(value)
-        ) {
-
-            return value;
-        }
-
-    } catch (error) {
-        // Ignora histórico inválido.
-    }
-
-    return [];
+function saveMemory() {
+    localStorage.setItem(
+        "luna_memory",
+        JSON.stringify(memory)
+    );
 }
-
 
 function saveHistory() {
-
-    if (
-        history.length >
-        MAX_STORED_MESSAGES
-    ) {
-
-        history =
-            history.slice(
-                -MAX_STORED_MESSAGES
-            );
-    }
-
-    try {
-
-        localStorage.setItem(
-            "luna_history",
-            JSON.stringify(
-                history
-            )
-        );
-
-    } catch (error) {
-        // Histórico não é essencial para a geração.
-    }
-}
-
-
-/* =========================================================
-   STATUS
-   ========================================================= */
-
-function setStatus(
-    text
-) {
-
-    status.textContent =
-        text;
-}
-
-
-/* =========================================================
-   ERRO
-   ========================================================= */
-
-function errorText(
-    error
-) {
-
-    if (
-        error &&
-        error.message
-    ) {
-
-        return error.message;
-    }
-
-    return String(
-        error ||
-        "Erro desconhecido"
+    localStorage.setItem(
+        "luna_history",
+        JSON.stringify(history)
     );
 }
 
+function setStatus(text) {
+    status.textContent = text;
+}
 
-/* =========================================================
-   MENSAGEM
-   ========================================================= */
-
-function addMessage(
-    text,
-    type
-) {
-
+function addMessage(text, type) {
     const element =
-        document.createElement(
-            "div"
-        );
+        document.createElement("div");
 
     element.className =
-        `message ${type}`;
+        "message " + type;
 
-    element.textContent =
-        String(
-            text || ""
-        );
+    element.textContent = text;
 
-    chat.appendChild(
-        element
-    );
-
-    chat.scrollTop =
-        chat.scrollHeight;
+    chat.appendChild(element);
+    chat.scrollTop = chat.scrollHeight;
 
     return element;
 }
 
-
-/* =========================================================
-   CARREGAR CONVERSA NA TELA
-   ========================================================= */
-
-function loadHistoryOnScreen() {
-
-    for (
-        const item of history
-    ) {
-
-        if (
-            !item ||
-            typeof item.content !==
-                "string"
-        ) {
-
-            continue;
-        }
-
+function loadHistory() {
+    for (const message of history) {
         addMessage(
-            item.content,
-            item.role === "user"
+            message.content,
+            message.role === "user"
                 ? "user"
                 : "ai"
         );
     }
 }
 
-
-/* =========================================================
-   LIMPAR RESPOSTA
-   ========================================================= */
-
-function cleanAnswer(
-    text
-) {
-
-    return String(
-        text || ""
-    )
-
-        .replace(
-            /^assistant\s*:\s*/i,
-            ""
-        )
-
-        .replace(
-            /^luna\s*:\s*/i,
-            ""
-        )
-
-        .replace(
-            /<\|im_end\|>[\s\S]*$/g,
-            ""
-        )
-
-        .replace(
-            /<\|endoftext\|>[\s\S]*$/g,
-            ""
-        )
-
-        .trim();
-}
-
-
-/* =========================================================
-   EXTRAIR RESPOSTA
-   ========================================================= */
-
-function extractAnswer(
-    output
-) {
-
-    if (
-        !output ||
-        !Array.isArray(output) ||
-        !output[0]
-    ) {
-
-        return "";
-    }
-
-    const generated =
-        output[0].generated_text;
-
-
-    if (
-        Array.isArray(
-            generated
-        )
-    ) {
-
-        for (
-            let i =
-                generated.length - 1;
-
-            i >= 0;
-
-            i -= 1
-        ) {
-
-            const item =
-                generated[i];
-
-            if (
-                item &&
-                item.role ===
-                    "assistant" &&
-                typeof item.content ===
-                    "string"
-            ) {
-
-                return item.content;
-            }
-        }
-
-        return "";
-    }
-
-
-    if (
-        typeof generated ===
-            "string"
-    ) {
-
-        return generated;
-    }
-
-
-    return "";
-}
-
-
-/* =========================================================
-   BLOQUEAR/DESBLOQUEAR INTERFACE
-   ========================================================= */
-
-function setBusy(
-    value
-) {
-
-    generating =
-        value;
-
-    sendButton.disabled =
-        value;
-
-    input.disabled =
-        value;
-}
-
-
-/* =========================================================
-   WEB WORKER
-   ========================================================= */
-
-/*
- * O modelo roda dentro do Worker.
- *
- * A página principal continua responsável
- * somente pela interface.
- *
- * IMPORTANTE:
- *
- * Nesta versão:
- *
- * - sem histórico no modelo
- * - sem memória no modelo
- * - sem cache KV
- * - somente uma mensagem
- */
-
-const workerSource = `
-
-    import {
-        pipeline,
-        env
-    } from "${TRANSFORMERS_URL}";
-
-
-    /* -----------------------------------------
-       WASM
-       ----------------------------------------- */
-
-    env.backends.onnx.wasm.numThreads = 1;
-
-    env.backends.onnx.wasm.proxy = false;
-
-
-    /* -----------------------------------------
-       ESTADO DO MODELO
-       ----------------------------------------- */
-
-    let generator = null;
-
-    let loading = false;
-
-    let generating = false;
-
-
-    /* -----------------------------------------
-       MENSAGENS DO WORKER
-       ----------------------------------------- */
-
-    self.onmessage =
-        async function(event) {
-
-            const message =
-                event.data || {};
-
-
-            /* =================================
-               CARREGAR MODELO
-               ================================= */
-
-            if (
-                message.type ===
-                "load"
-            ) {
-
-                if (
-                    loading ||
-                    generator
-                ) {
-
-                    return;
-                }
-
-
-                loading =
-                    true;
-
-
-                self.postMessage({
-                    type:
-                        "load-start"
-                });
-
-
-                try {
-
-                    generator =
-                        await pipeline(
-                            "text-generation",
-
-                            message.model,
-
-                            {
-                                device:
-                                    "wasm",
-
-                                dtype:
-                                    "q4",
-
-                                progress_callback:
-                                    function(progress) {
-
-                                        if (
-                                            progress
-                                        ) {
-
-                                            self.postMessage({
-                                                type:
-                                                    "progress",
-
-                                                progress:
-                                                    progress
-                                            });
-                                        }
-                                    }
-                            }
-                        );
-
-
-                    self.postMessage({
-                        type:
-                            "ready"
-                    });
-
-
-                } catch (
-                    error
-                ) {
-
-                    self.postMessage({
-                        type:
-                            "load-error",
-
-                        error:
-                            error &&
-                            error.message
-                                ? error.message
-                                : String(error)
-                    });
-
-
-                } finally {
-
-                    loading =
-                        false;
-                }
-
-
-                return;
-            }
-
-
-            /* =================================
-               GERAÇÃO
-               ================================= */
-
-            if (
-                message.type !==
-                "generate"
-            ) {
-
-                return;
-            }
-
-
-            if (
-                !generator
-            ) {
-
-                self.postMessage({
-                    type:
-                        "generation-error",
-
-                    id:
-                        message.id,
-
-                    error:
-                        "Modelo ainda não está carregado."
-                });
-
-                return;
-            }
-
-
-            /*
-             * Nunca permite duas gerações
-             * simultâneas dentro do worker.
-             */
-
-            if (
-                generating
-            ) {
-
-                self.postMessage({
-                    type:
-                        "generation-error",
-
-                    id:
-                        message.id,
-
-                    error:
-                        "Outra geração já está em andamento."
-                });
-
-                return;
-            }
-
-
-            generating =
-                true;
-
-
-            try {
-
-                /*
-                 * Apenas uma mensagem é enviada.
-                 *
-                 * Não existe histórico.
-                 * Não existe memória.
-                 */
-
-                const output =
-                    await generator(
-
-                        message.messages,
-
-                        {
-
-                            /*
-                             * Resposta curta.
-                             */
-
-                            max_new_tokens:
-                                message.maxNewTokens,
-
-
-                            /*
-                             * Geração determinística.
-                             */
-
-                            do_sample:
-                                false,
-
-
-                            /*
-                             * Não repetir
-                             * o prompt na saída.
-                             */
-
-                            return_full_text:
-                                false,
-
-
-                            /*
-                             * TESTE IMPORTANTE:
-                             *
-                             * desativamos o KV cache.
-                             */
-
-                            use_cache:
-                                false
-                        }
-                    );
-
-
-                /*
-                 * Envia o resultado para
-                 * a página principal.
-                 */
-
-                self.postMessage({
-
-                    type:
-                        "result",
-
-                    id:
-                        message.id,
-
-                    output:
-                        output
-                });
-
-
-            } catch (
-                error
-            ) {
-
-                self.postMessage({
-
-                    type:
-                        "generation-error",
-
-                    id:
-                        message.id,
-
-                    error:
-                        error &&
-                        error.message
-                            ? error.message
-                            : String(error)
-                });
-
-
-            } finally {
-
-                generating =
-                    false;
-            }
-        };
-`;
-
-
-/* =========================================================
-   CRIAR WORKER
-   ========================================================= */
-
-function createWorker() {
-
-    if (
-        worker
-    ) {
-
-        return worker;
-    }
-
-
-    const blob =
-        new Blob(
-            [workerSource],
-            {
-                type:
-                    "text/javascript"
-            }
-        );
-
-
-    workerUrl =
-        URL.createObjectURL(
-            blob
-        );
-
-
-    worker =
-        new Worker(
-            workerUrl,
-            {
-                type:
-                    "module"
-            }
-        );
-
-
-    worker.addEventListener(
-        "message",
-        handleWorkerMessage
-    );
-
-
-    worker.addEventListener(
-        "error",
-        handleWorkerError
-    );
-
-
-    return worker;
-}
-
-
-/* =========================================================
-   MENSAGENS DO WORKER
-   ========================================================= */
-
-function handleWorkerMessage(
-    event
-) {
-
-    const message =
-        event.data || {};
-
-
-    /* -----------------------------------------
-       DOWNLOAD
-       ----------------------------------------- */
-
-    if (
-        message.type ===
-        "load-start"
-    ) {
-
-        setStatus(
-            "Carregando Luna..."
-        );
-
+function progressCallback(progress) {
+    if (!progress) return;
+
+    if (progress.status === "initiate") {
+        setStatus("Iniciando download...");
         return;
     }
 
+    if (progress.status === "progress") {
+        const value =
+            Number(progress.progress);
 
-    /* -----------------------------------------
-       PROGRESSO
-       ----------------------------------------- */
-
-    if (
-        message.type ===
-        "progress"
-    ) {
-
-        const progress =
-            message.progress ||
-            {};
-
-
-        if (
-            progress.status ===
-            "progress"
-        ) {
-
-            const value =
-                Number(
-                    progress.progress
-                );
-
-
-            if (
-                Number.isFinite(
-                    value
-                )
-            ) {
-
-                setStatus(
-                    `Baixando IA... ${Math.round(value)}%`
-                );
-
-            } else {
-
-                setStatus(
-                    "Baixando IA..."
-                );
-            }
-
-
-        } else if (
-            progress.status ===
-            "done"
-        ) {
-
+        if (Number.isFinite(value)) {
             setStatus(
-                "Finalizando..."
+                "Baixando IA... " +
+                Math.round(value) +
+                "%"
             );
+        } else {
+            setStatus("Baixando IA...");
         }
-
 
         return;
     }
 
+    if (progress.status === "done") {
+        setStatus("Finalizando...");
+    }
+}
 
-    /* -----------------------------------------
-       MODELO PRONTO
-       ----------------------------------------- */
+async function loadModel() {
+    setStatus("Preparando IA...");
 
-    if (
-        message.type ===
-        "ready"
-    ) {
-
-        loading =
-            false;
-
-        workerReady =
-            true;
-
+    try {
         setStatus(
-            "Online - worker local"
+            "Iniciando Luna pela CPU..."
         );
+
+        generator =
+            await pipeline(
+                "text-generation",
+                MODEL,
+                {
+                    device: "wasm",
+                    dtype: "q4",
+                    progress_callback:
+                        progressCallback
+                }
+            );
+
+        setStatus("Online - CPU");
 
         addMessage(
             "Luna está online.",
             "ai"
         );
 
-        return;
-    }
+    } catch (error) {
+        console.error(
+            "ERRO COMPLETO:",
+            error
+        );
 
-
-    /* -----------------------------------------
-       ERRO NO MODELO
-       ----------------------------------------- */
-
-    if (
-        message.type ===
-        "load-error"
-    ) {
-
-        loading =
-            false;
-
-        workerReady =
-            false;
+        generator = null;
 
         setStatus(
             "Erro ao carregar IA"
         );
 
-        addMessage(
-            `ERRO AO CARREGAR:\n\n${message.error}`,
-            "ai"
-        );
+        let errorText =
+            "Erro desconhecido";
 
-        return;
-    }
-
-
-    /* -----------------------------------------
-       RESULTADO
-       ----------------------------------------- */
-
-    if (
-        message.type ===
-        "result"
-    ) {
-
-        const item =
-            pending.get(
-                message.id
-            );
-
-
-        if (!item) {
-            return;
+        if (
+            error &&
+            error.message
+        ) {
+            errorText =
+                error.message;
+        } else if (
+            typeof error === "string"
+        ) {
+            errorText = error;
         }
 
-
-        pending.delete(
-            message.id
-        );
-
-
-        item.resolve(
-            message.output
-        );
-
-        return;
-    }
-
-
-    /* -----------------------------------------
-       ERRO NA GERAÇÃO
-       ----------------------------------------- */
-
-    if (
-        message.type ===
-        "generation-error"
-    ) {
-
-        const item =
-            pending.get(
-                message.id
-            );
-
-
-        if (!item) {
-            return;
-        }
-
-
-        pending.delete(
-            message.id
-        );
-
-
-        item.reject(
-            new Error(
-                message.error
-            )
-        );
-    }
-}
-
-
-/* =========================================================
-   ERRO DO WORKER
-   ========================================================= */
-
-function handleWorkerError(
-    event
-) {
-
-    loading =
-        false;
-
-    workerReady =
-        false;
-
-
-    for (
-        const item of
-        pending.values()
-    ) {
-
-        item.reject(
-            new Error(
-                "O worker de inferência foi encerrado."
-            )
-        );
-    }
-
-
-    pending.clear();
-
-
-    if (
-        generating
-    ) {
-
-        setBusy(
-            false
-        );
-
         addMessage(
-            "A geração foi interrompida porque o worker falhou.",
+            "ERRO REAL:\n\n" +
+            errorText,
             "ai"
         );
     }
-
-
-    setStatus(
-        "Worker indisponível"
-    );
 }
 
+function cleanAnswer(text) {
+    if (!text) {
+        return "";
+    }
 
-/* =========================================================
-   PEDIR GERAÇÃO
-   ========================================================= */
+    text = text.trim();
 
-function requestGeneration(
-    messages
-) {
-
-    return new Promise(
-        (
-            resolve,
-            reject
-        ) => {
-
-            const id =
-                ++requestId;
-
-
-            pending.set(
-                id,
-                {
-                    resolve,
-                    reject
-                }
-            );
-
-
-            worker.postMessage({
-
-                type:
-                    "generate",
-
-                id:
-                    id,
-
-                messages:
-                    messages,
-
-                maxNewTokens:
-                    MAX_NEW_TOKENS
-            });
-        }
+    text = text.replace(
+        /^assistant\s*:\s*/i,
+        ""
     );
+
+    text = text.replace(
+        /^luna\s*:\s*/i,
+        ""
+    );
+
+    return text.trim();
 }
 
-
-/* =========================================================
-   GERAR
-   ========================================================= */
-
-async function generate(
-    userMessage
-) {
-
+async function generate(userMessage) {
     if (
-        !workerReady ||
+        !generator ||
         generating
     ) {
-
         return;
     }
 
+    generating = true;
 
-    setBusy(
-        true
-    );
-
-
-    /*
-     * Salva no histórico somente
-     * para manter a conversa na página.
-     *
-     * NÃO será enviado para o modelo.
-     */
+    sendButton.disabled = true;
 
     history.push({
-
-        role:
-            "user",
-
-        content:
-            userMessage
+        role: "user",
+        content: userMessage
     });
-
 
     saveHistory();
 
+    const memoryText =
+        Object.keys(memory).length > 0
+            ? JSON.stringify(memory)
+            : "Nenhuma memória salva.";
+
+    const recentHistory =
+        history.slice(-8);
+
+    const messages = [
+        {
+            role: "system",
+            content:
+                PERSONALITY +
+                `
+
+Memória atual:
+
+${memoryText}
+
+Responda somente ao usuário.
+Não escreva instruções.
+Não continue a conversa sozinho.
+Não invente outra pessoa falando.
+`
+        },
+        ...recentHistory
+    ];
 
     const thinking =
         addMessage(
@@ -1101,279 +261,178 @@ async function generate(
             "ai"
         );
 
-
     try {
-
-        /*
-         * TESTE ISOLADO:
-         *
-         * somente a mensagem atual.
-         */
-
-        const messages = [
-
-            {
-                role:
-                    "system",
-
-                content:
-                    PERSONALITY
-            },
-
-            {
-                role:
-                    "user",
-
-                content:
-                    userMessage
-            }
-
-        ];
-
-
         const output =
-            await requestGeneration(
-                messages
+            await generator(
+                messages,
+                {
+                    max_new_tokens: 100,
+                    temperature: 0.7,
+                    do_sample: true,
+                    repetition_penalty: 1.1,
+                    top_k: 20,
+                    top_p: 0.8
+                }
             );
 
-
-        const answer =
-            cleanAnswer(
-                extractAnswer(
-                    output
-                )
-            );
-
-
-        thinking.remove();
-
+        let answer = "";
 
         if (
-            answer
+            output &&
+            output[0]
         ) {
+            const generated =
+                output[0].generated_text;
 
-            addMessage(
-                answer,
-                "ai"
-            );
+            if (
+                Array.isArray(
+                    generated
+                )
+            ) {
+                const last =
+                    generated[
+                        generated.length - 1
+                    ];
 
-
-            history.push({
-
-                role:
-                    "assistant",
-
-                content:
-                    answer
-            });
-
-
-            saveHistory();
-
-        } else {
-
-            addMessage(
-                "Não consegui gerar uma resposta.",
-                "ai"
-            );
+                if (
+                    last &&
+                    typeof last.content ===
+                        "string"
+                ) {
+                    answer =
+                        last.content;
+                } else if (
+                    typeof last ===
+                        "string"
+                ) {
+                    answer =
+                        last;
+                }
+            } else if (
+                typeof generated ===
+                    "string"
+            ) {
+                answer =
+                    generated;
+            }
         }
 
+        answer =
+            cleanAnswer(answer);
 
-    } catch (
-        error
-    ) {
+        if (!answer) {
+            answer =
+                "Não consegui gerar uma resposta.";
+        }
 
         thinking.remove();
 
-
         addMessage(
-            `ERRO AO RESPONDER:\n\n${errorText(error)}`,
+            answer,
             "ai"
         );
 
+        history.push({
+            role: "assistant",
+            content: answer
+        });
 
-    } finally {
+        saveHistory();
 
-        setBusy(
-            false
+    } catch (error) {
+        console.error(
+            "ERRO AO RESPONDER:",
+            error
         );
 
-        input.focus();
+        thinking.remove();
+
+        let errorText =
+            "Erro desconhecido";
+
+        if (
+            error &&
+            error.message
+        ) {
+            errorText =
+                error.message;
+        }
+
+        addMessage(
+            "ERRO AO RESPONDER:\n\n" +
+            errorText,
+            "ai"
+        );
     }
+
+    generating = false;
+
+    sendButton.disabled = false;
+
+    input.focus();
 }
-
-
-/* =========================================================
-   ENVIAR
-   ========================================================= */
-
-async function handleSend() {
-
-    if (
-        loading ||
-        generating ||
-        !workerReady
-    ) {
-
-        return;
-    }
-
-
-    const message =
-        input.value.trim();
-
-
-    if (!message) {
-        return;
-    }
-
-
-    /*
-     * Limpa imediatamente.
-     */
-
-    input.value =
-        "";
-
-
-    /*
-     * Mostra a mensagem
-     * imediatamente.
-     */
-
-    addMessage(
-        message,
-        "user"
-    );
-
-
-    /*
-     * Dá uma pequena chance
-     * para o navegador atualizar
-     * a interface antes da geração.
-     */
-
-    await new Promise(
-        resolve =>
-            setTimeout(
-                resolve,
-                0
-            )
-    );
-
-
-    await generate(
-        message
-    );
-}
-
-
-/* =========================================================
-   BOTÃO
-   ========================================================= */
 
 sendButton.addEventListener(
     "click",
-    handleSend
-);
+    async () => {
+        const message =
+            input.value.trim();
 
-
-/* =========================================================
-   ENTER
-   ========================================================= */
-
-input.addEventListener(
-    "keydown",
-    event => {
-
-        if (
-            event.key ===
-                "Enter" &&
-            !event.shiftKey
-        ) {
-
-            event.preventDefault();
-
-
-            if (
-                !loading &&
-                !generating
-            ) {
-
-                handleSend();
-            }
+        if (!message) {
+            return;
         }
-    }
-);
 
-
-/* =========================================================
-   LIMPAR
-   ========================================================= */
-
-clearButton.addEventListener(
-    "click",
-    () => {
-
-        if (
-            loading ||
-            generating
-        ) {
+        if (!generator) {
+            addMessage(
+                "A Luna ainda não terminou de carregar.",
+                "ai"
+            );
 
             return;
         }
 
+        input.value = "";
 
-        history =
-            [];
+        addMessage(
+            message,
+            "user"
+        );
 
-        saveHistory();
-
-
-        chat.innerHTML =
-            "";
-
-
-        setStatus(
-            workerReady
-                ? "Online - worker local"
-                : "Modelo não carregado"
+        await generate(
+            message
         );
     }
 );
 
+input.addEventListener(
+    "keydown",
+    event => {
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+            event.preventDefault();
 
-/* =========================================================
-   INICIAR
-   ========================================================= */
+            sendButton.click();
+        }
+    }
+);
+
+clearButton.addEventListener(
+    "click",
+    () => {
+        history = [];
+
+        saveHistory();
+
+        chat.innerHTML = "";
+    }
+);
 
 async function start() {
+    loadHistory();
 
-    loadHistoryOnScreen();
-
-
-    loading =
-        true;
-
-
-    setStatus(
-        "Iniciando worker..."
-    );
-
-
-    const inferenceWorker =
-        createWorker();
-
-
-    inferenceWorker.postMessage({
-
-        type:
-            "load",
-
-        model:
-            MODEL
-    });
+    await loadModel();
 }
-
 
 start();
