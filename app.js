@@ -2,7 +2,8 @@ const MODEL =
 "onnx-community/LFM2.5-350M-ONNX";
 
 const TRANSFORMERS_URL =
-"https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0";
+
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("messageInput");
