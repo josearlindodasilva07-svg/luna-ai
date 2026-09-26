@@ -4,18 +4,17 @@ import {
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
 const MODEL =
-    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX-MHA";
 
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
 
 const PERSONALITY = `
-Você é uma inteligência artificial chamada Luna.
+Você é Luna, uma inteligência artificial.
 
 Você conversa em português brasileiro.
 
 Sua personalidade:
-
 - natural
 - inteligente
 - direta
@@ -23,17 +22,17 @@ Sua personalidade:
 - curiosa
 - paciente
 
-Regras importantes:
-
-- Responda de forma clara e natural.
-- Use frases simples.
-- Não repita palavras ou frases sem motivo.
-- Não fique repetindo a mesma ideia.
+Regras:
+- Responda em português brasileiro.
+- Responda de forma natural.
+- Use frases claras e fáceis de entender.
+- Não repita palavras ou frases sem necessidade.
 - Não invente informações.
 - Se não souber algo, diga que não sabe.
-- Não escreva listas quando uma resposta normal for suficiente.
-- Não fale sobre seu funcionamento interno a menos que o usuário pergunte.
-- Não diga que é humana.
+- Não fique repetindo a pergunta do usuário.
+- Não faça listas quando uma resposta normal for melhor.
+- Não fale sobre seu funcionamento interno, a menos que o usuário pergunte.
+- Você não é uma pessoa humana.
 `;
 
 let generator = null;
@@ -75,7 +74,9 @@ function addMessage(text, type) {
     const element =
         document.createElement("div");
 
-    element.className = "message " + type;
+    element.className =
+        "message " + type;
+
     element.textContent = text;
 
     chat.appendChild(element);
@@ -104,7 +105,8 @@ function progressCallback(progress) {
     }
 
     if (progress.status === "progress") {
-        const value = Number(progress.progress);
+        const value =
+            Number(progress.progress);
 
         if (Number.isFinite(value)) {
             setStatus(
@@ -128,7 +130,9 @@ async function loadModel() {
     setStatus("Preparando IA...");
 
     try {
-        setStatus("Iniciando IA pela CPU...");
+        setStatus(
+            "Iniciando Luna pela CPU..."
+        );
 
         generator =
             await pipeline(
@@ -164,9 +168,15 @@ async function loadModel() {
         let errorText =
             "Erro desconhecido";
 
-        if (error && error.message) {
-            errorText = error.message;
-        } else if (typeof error === "string") {
+        if (
+            error &&
+            error.message
+        ) {
+            errorText =
+                error.message;
+        } else if (
+            typeof error === "string"
+        ) {
             errorText = error;
         }
 
@@ -178,12 +188,36 @@ async function loadModel() {
     }
 }
 
+function cleanAnswer(text) {
+    if (!text) {
+        return "";
+    }
+
+    text = text.trim();
+
+    text = text.replace(
+        /^assistant\s*:\s*/i,
+        ""
+    );
+
+    text = text.replace(
+        /^luna\s*:\s*/i,
+        ""
+    );
+
+    return text.trim();
+}
+
 async function generate(userMessage) {
-    if (!generator || generating) {
+    if (
+        !generator ||
+        generating
+    ) {
         return;
     }
 
     generating = true;
+
     sendButton.disabled = true;
 
     history.push({
@@ -194,9 +228,9 @@ async function generate(userMessage) {
     saveHistory();
 
     const memoryText =
-        Object.keys(memory).length
+        Object.keys(memory).length > 0
             ? JSON.stringify(memory)
-            : "Nenhuma memória";
+            : "Nenhuma memória salva.";
 
     const recentHistory =
         history.slice(-8);
@@ -208,13 +242,14 @@ async function generate(userMessage) {
                 PERSONALITY +
                 `
 
-Memória da Luna:
+Memória atual:
 
 ${memoryText}
 
-Responda somente à mensagem atual do usuário.
-Não repita a mensagem do usuário.
-Não repita palavras ou frases desnecessariamente.
+Responda somente ao usuário.
+Não escreva instruções.
+Não continue a conversa sozinho.
+Não invente outra pessoa falando.
 `
         },
         ...recentHistory
@@ -231,21 +266,29 @@ Não repita palavras ou frases desnecessariamente.
             await generator(
                 messages,
                 {
-                    max_new_tokens: 80,
-                    temperature: 0.4,
+                    max_new_tokens: 100,
+                    temperature: 0.7,
                     do_sample: true,
-                    repetition_penalty: 1.25,
-                    no_repeat_ngram_size: 3
+                    repetition_penalty: 1.1,
+                    top_k: 20,
+                    top_p: 0.8
                 }
             );
 
         let answer = "";
 
-        if (output && output[0]) {
+        if (
+            output &&
+            output[0]
+        ) {
             const generated =
                 output[0].generated_text;
 
-            if (Array.isArray(generated)) {
+            if (
+                Array.isArray(
+                    generated
+                )
+            ) {
                 const last =
                     generated[
                         generated.length - 1
@@ -274,7 +317,8 @@ Não repita palavras ou frases desnecessariamente.
             }
         }
 
-        answer = answer.trim();
+        answer =
+            cleanAnswer(answer);
 
         if (!answer) {
             answer =
@@ -322,7 +366,9 @@ Não repita palavras ou frases desnecessariamente.
     }
 
     generating = false;
+
     sendButton.disabled = false;
+
     input.focus();
 }
 
@@ -341,6 +387,7 @@ sendButton.addEventListener(
                 "A Luna ainda não terminou de carregar.",
                 "ai"
             );
+
             return;
         }
 
@@ -351,7 +398,9 @@ sendButton.addEventListener(
             "user"
         );
 
-        await generate(message);
+        await generate(
+            message
+        );
     }
 );
 
@@ -363,6 +412,7 @@ input.addEventListener(
             !event.shiftKey
         ) {
             event.preventDefault();
+
             sendButton.click();
         }
     }
@@ -372,13 +422,16 @@ clearButton.addEventListener(
     "click",
     () => {
         history = [];
+
         saveHistory();
+
         chat.innerHTML = "";
     }
 );
 
 async function start() {
     loadHistory();
+
     await loadModel();
 }
 
