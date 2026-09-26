@@ -2,8 +2,18 @@ import {
     pipeline
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
+
+// ============================================================
+// MODELO
+// ============================================================
+
 const MODEL =
-    "PengZhang424242/SmolLM2-360M-Instruct-ONNX";
+    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+
+
+// ============================================================
+// PERSONALIDADE DA LUNA
+// ============================================================
 
 const PERSONALITY = `
 Você é uma inteligência artificial chamada Luna.
@@ -26,10 +36,28 @@ Não invente informações.
 Se não souber algo, diga que não sabe.
 
 Responda de maneira natural e fácil de entender.
+
+Não fale sobre seu funcionamento interno
+a menos que o usuário pergunte.
+
+Mantenha as respostas claras e úteis.
 `;
 
+
+// ============================================================
+// VARIÁVEIS
+// ============================================================
+
 let generator = null;
+
 let generating = false;
+
+let currentDevice = null;
+
+
+// ============================================================
+// ELEMENTOS
+// ============================================================
 
 const chat =
     document.getElementById("chat");
@@ -47,64 +75,85 @@ const status =
     document.getElementById("status");
 
 
-/* =========================
-   MEMÓRIA
-========================= */
+// ============================================================
+// MEMÓRIA
+// ============================================================
 
 let memory = JSON.parse(
     localStorage.getItem("luna_memory") || "{}"
 );
+
 
 let history = JSON.parse(
     localStorage.getItem("luna_history") || "[]"
 );
 
 
+// ============================================================
+// SALVAR MEMÓRIA
+// ============================================================
+
 function saveMemory() {
+
     localStorage.setItem(
         "luna_memory",
         JSON.stringify(memory)
     );
+
 }
 
 
+// ============================================================
+// SALVAR HISTÓRICO
+// ============================================================
+
 function saveHistory() {
+
     localStorage.setItem(
         "luna_history",
         JSON.stringify(history)
     );
+
 }
 
 
-/* =========================
-   CHAT
-========================= */
+// ============================================================
+// ADICIONAR MENSAGEM
+// ============================================================
 
 function addMessage(
     text,
     type
 ) {
+
     const element =
         document.createElement("div");
+
 
     element.className =
         "message " + type;
 
+
     element.textContent =
         text;
 
-    chat.appendChild(element);
+
+    chat.appendChild(
+        element
+    );
+
 
     chat.scrollTop =
         chat.scrollHeight;
+
 
     return element;
 }
 
 
-/* =========================
-   CARREGAR HISTÓRICO
-========================= */
+// ============================================================
+// CARREGAR HISTÓRICO
+// ============================================================
 
 function loadHistory() {
 
@@ -119,141 +168,243 @@ function loadHistory() {
                 ? "user"
                 : "ai"
         );
+
     }
+
 }
 
 
-/* =========================
-   CARREGAR MODELO
-========================= */
+// ============================================================
+// ATUALIZAR STATUS
+// ============================================================
 
-async function loadModel() {
+function setStatus(
+    text
+) {
 
     status.textContent =
-        "Preparando IA...";
+        text;
 
-    try {
-
-        let device;
-
-        /*
-         * Se o navegador tiver WebGPU,
-         * tenta usar a GPU.
-         *
-         * Caso contrário,
-         * usa WASM/CPU.
-         */
-
-        if (
-            typeof navigator !== "undefined" &&
-            navigator.gpu
-        ) {
-
-            device = "webgpu";
-
-            status.textContent =
-                "Iniciando IA pela GPU...";
-
-        } else {
-
-            device = "wasm";
-
-            status.textContent =
-                "Iniciando IA pela CPU...";
-
-        }
+}
 
 
-        generator =
-            await pipeline(
-                "text-generation",
-                MODEL,
-                {
-                    device: device,
-                    dtype: "q4",
+// ============================================================
+// PROGRESSO DO DOWNLOAD
+// ============================================================
 
-                    progress_callback:
-                        (progress) => {
+function handleProgress(
+    progress
+) {
 
-                            if (
-                                progress &&
-                                progress.status === "progress"
-                            ) {
+    if (!progress) {
+        return;
+    }
 
-                                const value =
-                                    Number(
-                                        progress.progress
-                                    );
 
-                                if (
-                                    Number.isFinite(value)
-                                ) {
+    if (
+        progress.status === "initiate"
+    ) {
 
-                                    status.textContent =
-                                        `Baixando IA... ${Math.round(value)}%`;
+        setStatus(
+            "Iniciando download..."
+        );
 
-                                } else {
+        return;
+    }
 
-                                    status.textContent =
-                                        "Baixando IA...";
 
-                                }
+    if (
+        progress.status === "progress"
+    ) {
 
-                            }
-
-                            else if (
-                                progress &&
-                                progress.status === "initiate"
-                            ) {
-
-                                status.textContent =
-                                    "Iniciando download...";
-
-                            }
-
-                            else if (
-                                progress &&
-                                progress.status === "done"
-                            ) {
-
-                                status.textContent =
-                                    "Finalizando IA...";
-
-                            }
-                        }
-                }
+        const value =
+            Number(
+                progress.progress
             );
 
 
-        status.textContent =
-            device === "webgpu"
-                ? "Online - GPU"
-                : "Online - CPU";
+        if (
+            Number.isFinite(value)
+        ) {
+
+            setStatus(
+                `Baixando IA... ${Math.round(value)}%`
+            );
+
+        } else {
+
+            setStatus(
+                "Baixando IA..."
+            );
+
+        }
+
+        return;
+    }
+
+
+    if (
+        progress.status === "done"
+    ) {
+
+        setStatus(
+            "Finalizando IA..."
+        );
+
+    }
+
+}
+
+
+// ============================================================
+// CARREGAR MODELO
+// ============================================================
+
+async function createGenerator(
+    device
+) {
+
+    return await pipeline(
+        "text-generation",
+        MODEL,
+        {
+
+            device: device,
+
+            dtype:
+                device === "webgpu"
+                    ? "q4f16"
+                    : "q4",
+
+            progress_callback:
+                handleProgress
+
+        }
+    );
+
+}
+
+
+// ============================================================
+// INICIAR IA
+// ============================================================
+
+async function loadModel() {
+
+    setStatus(
+        "Preparando IA..."
+    );
+
+
+    // --------------------------------------------------------
+    // PRIMEIRA TENTATIVA: WEBGPU
+    // --------------------------------------------------------
+
+    if (
+        typeof navigator !== "undefined" &&
+        navigator.gpu
+    ) {
+
+        try {
+
+            setStatus(
+                "Tentando usar GPU..."
+            );
+
+
+            generator =
+                await createGenerator(
+                    "webgpu"
+                );
+
+
+            currentDevice =
+                "webgpu";
+
+
+            setStatus(
+                "Online - GPU"
+            );
+
+
+            return;
+
+        } catch (error) {
+
+            console.warn(
+                "WebGPU falhou. Tentando CPU...",
+                error
+            );
+
+
+            generator = null;
+
+            setStatus(
+                "GPU falhou. Tentando CPU..."
+            );
+
+        }
+
+    }
+
+
+    // --------------------------------------------------------
+    // SEGUNDA TENTATIVA: WASM / CPU
+    // --------------------------------------------------------
+
+    try {
+
+        setStatus(
+            "Iniciando IA pela CPU..."
+        );
+
+
+        generator =
+            await createGenerator(
+                "wasm"
+            );
+
+
+        currentDevice =
+            "wasm";
+
+
+        setStatus(
+            "Online - CPU"
+        );
 
 
     } catch (error) {
 
         console.error(
-            "Erro ao carregar Luna:",
+            "Erro ao carregar a Luna:",
             error
         );
 
+
         generator = null;
 
-        status.textContent =
-            "Erro ao carregar IA";
+        currentDevice = null;
+
+
+        setStatus(
+            "Erro ao carregar IA"
+        );
+
 
         addMessage(
-            "A Luna não conseguiu carregar a IA. Recarregue a página e tente novamente.",
+            "Não consegui carregar a IA neste navegador.",
             "ai"
         );
+
     }
+
 }
 
 
-/* =========================
-   GERAR RESPOSTA
-========================= */
+// ============================================================
+// GERAR RESPOSTA
+// ============================================================
 
 async function generate(
     userMessage
@@ -263,7 +414,9 @@ async function generate(
         !generator ||
         generating
     ) {
+
         return;
+
     }
 
 
@@ -272,43 +425,51 @@ async function generate(
     sendButton.disabled = true;
 
 
-    /*
-     * Salva mensagem do usuário
-     */
+    // --------------------------------------------------------
+    // SALVAR MENSAGEM DO USUÁRIO
+    // --------------------------------------------------------
 
     history.push({
+
         role: "user",
-        content: userMessage
+
+        content:
+            userMessage
+
     });
+
 
     saveHistory();
 
 
-    /*
-     * Memória
-     */
+    // --------------------------------------------------------
+    // MEMÓRIA
+    // --------------------------------------------------------
 
     const memoryText =
-        Object.keys(memory).length
-            ? JSON.stringify(memory)
+        Object.keys(memory).length > 0
+            ? JSON.stringify(
+                memory
+            )
             : "Nenhuma memória";
 
 
-    /*
-     * Últimas mensagens
-     */
+    // --------------------------------------------------------
+    // HISTÓRICO RECENTE
+    // --------------------------------------------------------
 
     const recentHistory =
-        history.slice(-12);
+        history.slice(-10);
 
 
-    /*
-     * Mensagens enviadas para a IA
-     */
+    // --------------------------------------------------------
+    // MENSAGENS
+    // --------------------------------------------------------
 
     const messages = [
 
         {
+
             role: "system",
 
             content:
@@ -319,6 +480,7 @@ Memória da Luna:
 
 ${memoryText}
 `
+
         },
 
         ...recentHistory
@@ -326,9 +488,9 @@ ${memoryText}
     ];
 
 
-    /*
-     * Mostra que está pensando
-     */
+    // --------------------------------------------------------
+    // MENSAGEM TEMPORÁRIA
+    // --------------------------------------------------------
 
     const thinking =
         addMessage(
@@ -343,11 +505,16 @@ ${memoryText}
             await generator(
                 messages,
                 {
-                    max_new_tokens: 180,
 
-                    temperature: 0.7,
+                    max_new_tokens:
+                        160,
 
-                    do_sample: true
+                    temperature:
+                        0.7,
+
+                    do_sample:
+                        true
+
                 }
             );
 
@@ -355,10 +522,9 @@ ${memoryText}
         let answer = "";
 
 
-        /*
-         * Transformers.js retorna
-         * generated_text.
-         */
+        // ----------------------------------------------------
+        // PEGAR RESPOSTA
+        // ----------------------------------------------------
 
         if (
             output &&
@@ -366,14 +532,9 @@ ${memoryText}
         ) {
 
             const generated =
-                output[0].generated_text;
+                output[0]
+                    .generated_text;
 
-
-            /*
-             * Modelos de chat
-             * normalmente retornam
-             * uma lista de mensagens.
-             */
 
             if (
                 Array.isArray(
@@ -394,74 +555,74 @@ ${memoryText}
                     answer =
                         last;
 
-                }
-
-                else if (
+                } else if (
                     last &&
                     typeof last.content === "string"
                 ) {
 
                     answer =
                         last.content;
+
                 }
 
-            }
-
-            /*
-             * Caso o modelo retorne
-             * texto diretamente.
-             */
-
-            else if (
+            } else if (
                 typeof generated === "string"
             ) {
 
                 answer =
                     generated;
+
             }
+
         }
 
 
-        /*
-         * Se não conseguiu encontrar
-         * a resposta.
-         */
+        // ----------------------------------------------------
+        // LIMPAR RESPOSTA
+        // ----------------------------------------------------
 
-        if (
-            !answer ||
-            !answer.trim()
-        ) {
+        answer =
+            answer.trim();
+
+
+        if (!answer) {
 
             answer =
                 "Não consegui gerar uma resposta.";
+
         }
 
 
-        /*
-         * Remove o "Pensando..."
-         */
+        // ----------------------------------------------------
+        // REMOVER PENSANDO
+        // ----------------------------------------------------
 
         thinking.remove();
 
 
-        /*
-         * Mostra resposta
-         */
+        // ----------------------------------------------------
+        // MOSTRAR RESPOSTA
+        // ----------------------------------------------------
 
         addMessage(
-            answer.trim(),
+            answer,
             "ai"
         );
 
 
-        /*
-         * Salva resposta
-         */
+        // ----------------------------------------------------
+        // SALVAR RESPOSTA
+        // ----------------------------------------------------
 
         history.push({
+
             role: "assistant",
-            content: answer.trim()
+
+            content:
+                answer
+
         });
+
 
         saveHistory();
 
@@ -481,6 +642,7 @@ ${memoryText}
             "Deu erro enquanto eu tentava responder.",
             "ai"
         );
+
     }
 
 
@@ -489,12 +651,13 @@ ${memoryText}
     sendButton.disabled = false;
 
     input.focus();
+
 }
 
 
-/* =========================
-   BOTÃO ENVIAR
-========================= */
+// ============================================================
+// BOTÃO ENVIAR
+// ============================================================
 
 sendButton.addEventListener(
     "click",
@@ -505,14 +668,11 @@ sendButton.addEventListener(
 
 
         if (!message) {
+
             return;
+
         }
 
-
-        /*
-         * Se a IA ainda não carregou,
-         * não tenta gerar.
-         */
 
         if (!generator) {
 
@@ -522,6 +682,7 @@ sendButton.addEventListener(
             );
 
             return;
+
         }
 
 
@@ -537,13 +698,14 @@ sendButton.addEventListener(
         await generate(
             message
         );
+
     }
 );
 
 
-/* =========================
-   ENTER PARA ENVIAR
-========================= */
+// ============================================================
+// ENTER
+// ============================================================
 
 input.addEventListener(
     "keydown",
@@ -557,14 +719,16 @@ input.addEventListener(
             event.preventDefault();
 
             sendButton.click();
+
         }
+
     }
 );
 
 
-/* =========================
-   LIMPAR CONVERSA
-========================= */
+// ============================================================
+// LIMPAR CONVERSA
+// ============================================================
 
 clearButton.addEventListener(
     "click",
@@ -575,29 +739,21 @@ clearButton.addEventListener(
         saveHistory();
 
         chat.innerHTML = "";
+
     }
 );
 
 
-/* =========================
-   INICIAR LUNA
-========================= */
+// ============================================================
+// INICIAR
+// ============================================================
 
 async function start() {
 
-    /*
-     * Primeiro mostra
-     * o histórico antigo.
-     */
-
     loadHistory();
 
-
-    /*
-     * Depois carrega a IA.
-     */
-
     await loadModel();
+
 }
 
 
