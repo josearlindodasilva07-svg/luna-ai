@@ -1,8 +1,8 @@
 const MODEL =
-    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+"onnx-community/LFM2.5-350M-ONNX";
 
 const TRANSFORMERS_URL =
-    "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
+"https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("messageInput");
@@ -12,67 +12,26 @@ const status = document.getElementById("status");
 
 const workerCode = `
 import {
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    env
+pipeline,
+env
 } from "${TRANSFORMERS_URL}";
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
-let tokenizer = null;
-let model = null;
+let generator = null;
 let loading = false;
 
 self.onmessage = async (event) => {
 
-    const data = event.data;
+const data = event.data;
 
-    try {
+try {
 
-        if (data.type === "load") {
+    if (data.type === "load") {
 
-            if (model && tokenizer) {
-
-                self.postMessage({
-                    type: "loaded"
-                });
-
-                return;
-            }
-
-            if (loading) {
-                return;
-            }
-
-            loading = true;
-
-            self.postMessage({
-                type: "status",
-                text: "Carregando Luna..."
-            });
-
-            tokenizer =
-                await AutoTokenizer.from_pretrained(
-                    "${MODEL}"
-                );
-
-            self.postMessage({
-                type: "status",
-                text: "Carregando modelo..."
-            });
-
-            model =
-                await AutoModelForCausalLM.from_pretrained(
-                    "${MODEL}",
-                    {
-                        device: "wasm",
-                        dtype: "q4"
-                    }
-                );
-
-            loading = false;
+        if (generator) {
 
             self.postMessage({
                 type: "loaded"
@@ -81,139 +40,162 @@ self.onmessage = async (event) => {
             return;
         }
 
+        if (loading) {
+            return;
+        }
 
-        if (data.type === "generate") {
+        loading = true;
 
-            if (!model || !tokenizer) {
 
-                throw new Error(
-                    "Modelo ainda não foi carregado."
-                );
+        self.postMessage({
+            type: "status",
+            text: "Baixando Luna..."
+        });
+
+
+        generator = await pipeline(
+            "text-generation",
+            "${MODEL}",
+            {
+                device: "wasm",
+                dtype: "q4"
+            }
+        );
+
+
+        loading = false;
+
+
+        self.postMessage({
+            type: "loaded"
+        });
+
+        return;
+    }
+
+
+    if (data.type === "generate") {
+
+        if (!generator) {
+
+            throw new Error(
+                "Modelo ainda não foi carregado."
+            );
+        }
+
+
+        const userText =
+            String(
+                data.prompt || ""
+            ).trim();
+
+
+        if (!userText) {
+            return;
+        }
+
+
+        const messages = [
+
+            {
+                role: "system",
+                content:
+                    "Você é Luna, uma assistente de inteligência artificial. " +
+                    "Responda em português do Brasil. " +
+                    "Seja natural, simples, direta e útil. " +
+                    "Responda somente ao que o usuário perguntar. " +
+                    "Não invente informações. " +
+                    "Não fale sobre seu treinamento. " +
+                    "Não escreva uma apresentação sobre você."
+            },
+
+            {
+                role: "user",
+                content: userText
             }
 
-            const userText =
-                String(data.prompt || "").trim();
-
-            if (!userText) {
-                return;
-            }
+        ];
 
 
-            /*
-             * Prompt extremamente simples.
-             *
-             * O modelo é pequeno, então evitamos
-             * instruções enormes.
-             */
+        self.postMessage({
+            type: "status",
+            text: "Pensando..."
+        });
 
-            const messages = [
+
+        const result =
+            await generator(
+                messages,
                 {
-                    role: "system",
-                    content:
-                        "Você é Luna. " +
-                        "Você fala somente português do Brasil. " +
-                        "Você responde diretamente ao usuário. " +
-                        "Nunca fale sobre ser uma guia do universo. " +
-                        "Nunca diga que é uma entidade ou personagem. " +
-                        "Nunca comece uma resposta com 'I am Luna'. " +
-                        "Nunca responda em inglês."
-                },
-                {
-                    role: "user",
-                    content: userText
-                }
-            ];
-
-
-            let prompt;
-
-            if (
-                typeof tokenizer.apply_chat_template ===
-                "function"
-            ) {
-
-                prompt =
-                    tokenizer.apply_chat_template(
-                        messages,
-                        {
-                            tokenize: false,
-                            add_generation_prompt: true
-                        }
-                    );
-
-            } else {
-
-                prompt =
-                    "<|im_start|>system\\n" +
-                    "Você é Luna. " +
-                    "Fale somente português do Brasil. " +
-                    "Responda diretamente ao usuário. " +
-                    "Nunca responda em inglês." +
-                    "<|im_end|>\\n" +
-
-                    "<|im_start|>user\\n" +
-                    userText +
-                    "<|im_end|>\\n" +
-
-                    "<|im_start|>assistant\\n";
-            }
-
-
-            const inputs =
-                await tokenizer(
-                    prompt,
-                    {
-                        return_tensors: "pt"
-                    }
-                );
-
-
-            const output =
-                await model.generate({
-                    ...inputs,
-
-                    max_new_tokens: 60,
+                    max_new_tokens: 100,
 
                     do_sample: true,
 
-                    temperature: 0.45,
+                    temperature: 0.7,
 
-                    top_p: 0.85,
+                    top_p: 0.9,
 
-                    repetition_penalty: 1.15
-                });
-
-
-            let text =
-                tokenizer.decode(
-                    output[0],
-                    {
-                        skip_special_tokens: true
-                    }
-                );
+                    repetition_penalty: 1.1
+                }
+            );
 
 
-            /*
-             * Remove o prompt caso ele tenha
-             * sido devolvido junto com a resposta.
-             */
+        let text = "";
 
-            if (text.startsWith(prompt)) {
+
+        if (
+            Array.isArray(result) &&
+            result.length > 0
+        ) {
+
+            const generated =
+                result[0]?.generated_text;
+
+
+            if (
+                Array.isArray(generated) &&
+                generated.length > 0
+            ) {
+
+                const last =
+                    generated[
+                        generated.length - 1
+                    ];
+
+
+                if (
+                    last &&
+                    typeof last.content ===
+                    "string"
+                ) {
+
+                    text =
+                        last.content;
+                }
+
+            } else if (
+                typeof generated ===
+                "string"
+            ) {
 
                 text =
-                    text.substring(
-                        prompt.length
-                    );
+                    generated;
             }
+        }
 
 
-            /*
-             * Limpeza dos marcadores.
-             */
+        text =
+            String(text).trim();
 
-            text = text
+
+        text =
+            text
                 .replace(
-                    /<\\|im_start\\|>/gi,
+                    /^assistant\\s*:/i,
+                    ""
+                )
+                .replace(
+                    /^luna\\s*:/i,
                     ""
                 )
                 .replace(
@@ -221,409 +203,340 @@ self.onmessage = async (event) => {
                     ""
                 )
                 .replace(
-                    /<\\|assistant\\|>/gi,
-                    ""
-                )
-                .replace(
-                    /<\\|user\\|>/gi,
-                    ""
-                )
-                .replace(
-                    /<\\|system\\|>/gi,
+                    /<\\|endoftext\\|>/gi,
                     ""
                 )
                 .trim();
 
 
-            /*
-             * Se o modelo começar a repetir
-             * a personalidade em inglês,
-             * corta essa resposta.
-             */
-
-            const badStarts = [
-                "I am Luna",
-                "I am a wise",
-                "I am the one",
-                "I have been listening",
-                "I have always",
-                "I will not stray",
-                "The stories are",
-                "I am here to guide",
-                "I am your guide"
-            ];
-
-
-            for (const bad of badStarts) {
-
-                if (
-                    text
-                        .toLowerCase()
-                        .startsWith(
-                            bad.toLowerCase()
-                        )
-                ) {
-
-                    text = "";
-                    break;
-                }
-            }
-
-
-            /*
-             * Evita respostas absurdamente longas
-             * ou repetitivas.
-             */
-
-            if (text.length > 600) {
-
-                text =
-                    text.substring(
-                        0,
-                        600
-                    ).trim();
-            }
-
-
-            /*
-             * Remove repetições exatas de frases.
-             */
-
-            const sentences =
-                text
-                    .split(/(?<=[.!?])\\s+/)
-                    .filter(Boolean);
-
-            const unique = [];
-
-            for (const sentence of sentences) {
-
-                if (
-                    !unique.some(
-                        x =>
-                            x.toLowerCase() ===
-                            sentence.toLowerCase()
-                    )
-                ) {
-
-                    unique.push(sentence);
-                }
-            }
+        if (!text) {
 
             text =
-                unique.join(" ").trim();
-
-
-            if (!text) {
-
-                text =
-                    "não entendi direito, fala de novo";
-            }
-
-
-            self.postMessage({
-                type: "result",
-                text
-            });
-
+                "Não consegui responder.";
         }
 
-    } catch (error) {
-
-        loading = false;
 
         self.postMessage({
-            type: "error",
-
-            error:
-                error?.message ||
-                String(error),
-
-            stack:
-                error?.stack ||
-                ""
+            type: "result",
+            text
         });
+
     }
+
+} catch (error) {
+
+    loading = false;
+
+
+    self.postMessage({
+        type: "error",
+
+        error:
+            error?.message ||
+            String(error),
+
+        stack:
+            error?.stack ||
+            ""
+    });
+}
+
 };
 
-
 const workerBlob =
-    new Blob(
-        [workerCode],
-        {
-            type: "application/javascript"
-        }
-    );
-
+new Blob(
+[workerCode],
+{
+type: "application/javascript"
+}
+);
 
 const worker =
-    new Worker(
-        URL.createObjectURL(
-            workerBlob
-        ),
-        {
-            type: "module"
-        }
-    );
-
+new Worker(
+URL.createObjectURL(
+workerBlob
+),
+{
+type: "module"
+}
+);
 
 let modelReady = false;
 let generating = false;
 
-
 function addMessage(
-    text,
-    type
+text,
+type
 ) {
 
-    const div =
-        document.createElement(
-            "div"
-        );
+const div =
+    document.createElement(
+        "div"
+    );
 
-    div.className =
-        "message " + type;
 
-    div.textContent =
-        text;
+div.className =
+    "message " + type;
 
-    chat.appendChild(div);
 
-    chat.scrollTop =
-        chat.scrollHeight;
+div.textContent =
+    text;
 
-    return div;
+
+chat.appendChild(div);
+
+
+chat.scrollTop =
+    chat.scrollHeight;
+
+
+return div;
+
 }
-
 
 function setStatus(text) {
 
-    status.textContent =
-        text;
+status.textContent =
+    text;
+
 }
 
-
 worker.onmessage =
-    (event) => {
+(event) => {
 
-        const data =
-            event.data;
-
-
-        if (
-            data.type ===
-            "status"
-        ) {
-
-            setStatus(
-                data.text
-            );
-
-            return;
-        }
+    const data =
+        event.data;
 
 
-        if (
-            data.type ===
-            "loaded"
-        ) {
+    if (
+        data.type ===
+        "status"
+    ) {
 
-            modelReady =
-                true;
-
-            setStatus(
-                "Online"
-            );
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
-            return;
-        }
-
-
-        if (
-            data.type ===
-            "result"
-        ) {
-
-            generating =
-                false;
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
-            setStatus(
-                "Online"
-            );
-
-
-            let answer =
-                String(
-                    data.text || ""
-                ).trim();
-
-
-            if (!answer) {
-
-                answer =
-                    "não consegui responder";
-            }
-
-
-            addMessage(
-                answer,
-                "ai"
-            );
-
-            return;
-        }
-
-
-        if (
-            data.type ===
-            "error"
-        ) {
-
-            generating =
-                false;
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
-            setStatus(
-                "Erro"
-            );
-
-
-            addMessage(
-                "ERRO AO RESPONDER: " +
-                data.error,
-                "ai"
-            );
-
-            console.error(
-                "Luna Worker Error:",
-                data.error
-            );
-
-            console.error(
-                data.stack || ""
-            );
-
-            return;
-        }
-    };
-
-
-function sendMessage() {
-
-    if (generating) {
-        return;
-    }
-
-
-    if (!modelReady) {
-
-        addMessage(
-            "O modelo ainda está carregando.",
-            "ai"
+        setStatus(
+            data.text
         );
 
         return;
     }
 
 
-    const text =
-        input.value.trim();
+    if (
+        data.type ===
+        "loaded"
+    ) {
+
+        modelReady =
+            true;
 
 
-    if (!text) {
+        setStatus(
+            "Online"
+        );
+
+
+        sendButton.disabled =
+            false;
+
+
+        input.disabled =
+            false;
+
+
         return;
     }
 
 
-    addMessage(
-        text,
-        "user"
-    );
+    if (
+        data.type ===
+        "result"
+    ) {
+
+        generating =
+            false;
 
 
-    input.value = "";
-
-    generating =
-        true;
-
-    sendButton.disabled =
-        true;
-
-    input.disabled =
-        true;
-
-    setStatus(
-        "Pensando..."
-    );
+        sendButton.disabled =
+            false;
 
 
-    worker.postMessage({
-        type: "generate",
-        prompt: text
-    });
+        input.disabled =
+            false;
+
+
+        setStatus(
+            "Online"
+        );
+
+
+        let answer =
+            String(
+                data.text || ""
+            ).trim();
+
+
+        if (!answer) {
+
+            answer =
+                "Não consegui responder.";
+        }
+
+
+        addMessage(
+            answer,
+            "ai"
+        );
+
+
+        return;
+    }
+
+
+    if (
+        data.type ===
+        "error"
+    ) {
+
+        generating =
+            false;
+
+
+        sendButton.disabled =
+            false;
+
+
+        input.disabled =
+            false;
+
+
+        setStatus(
+            "Erro"
+        );
+
+
+        addMessage(
+            "ERRO AO RESPONDER: " +
+            data.error,
+            "ai"
+        );
+
+
+        console.error(
+            "Luna Worker Error:",
+            data.error
+        );
+
+
+        console.error(
+            data.stack || ""
+        );
+
+
+        return;
+    }
+};
+
+function sendMessage() {
+
+if (generating) {
+    return;
 }
 
 
-sendButton.addEventListener(
-    "click",
-    sendMessage
+if (!modelReady) {
+
+    addMessage(
+        "O modelo ainda está carregando.",
+        "ai"
+    );
+
+    return;
+}
+
+
+const text =
+    input.value.trim();
+
+
+if (!text) {
+    return;
+}
+
+
+addMessage(
+    text,
+    "user"
 );
 
 
-input.addEventListener(
-    "keydown",
-    (event) => {
-
-        if (
-            event.key === "Enter" &&
-            !event.shiftKey
-        ) {
-
-            event.preventDefault();
-
-            sendMessage();
-        }
-    }
-);
+input.value = "";
 
 
-clearButton.addEventListener(
-    "click",
-    () => {
-
-        chat.innerHTML = "";
-    }
-);
+generating =
+    true;
 
 
 sendButton.disabled =
     true;
 
+
 input.disabled =
     true;
 
+
 setStatus(
-    "Carregando Luna..."
+    "Pensando..."
 );
 
 
 worker.postMessage({
-    type: "load"
+    type: "generate",
+    prompt: text
+});
+
+}
+
+sendButton.addEventListener(
+"click",
+sendMessage
+);
+
+input.addEventListener(
+"keydown",
+(event) => {
+
+    if (
+        event.key === "Enter" &&
+        !event.shiftKey
+    ) {
+
+        event.preventDefault();
+
+        sendMessage();
+    }
+}
+
+);
+
+clearButton.addEventListener(
+"click",
+() => {
+
+    chat.innerHTML = "";
+}
+
+);
+
+sendButton.disabled =
+true;
+
+input.disabled =
+true;
+
+setStatus(
+"Carregando Luna..."
+);
+
+worker.postMessage({
+type: "load"
 });
