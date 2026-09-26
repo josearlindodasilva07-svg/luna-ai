@@ -1,4 +1,5 @@
-const MODEL = "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+const MODEL =
+    "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
 
 const TRANSFORMERS_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
@@ -9,10 +10,20 @@ const sendButton = document.getElementById("sendButton");
 const clearButton = document.getElementById("clearButton");
 const status = document.getElementById("status");
 
+const CHAT_TEMPLATE =
+    "{% for message in messages %}" +
+    "{% if loop.first and messages[0]['role'] != 'system' %}" +
+    "{{ '<|im_start|>system\\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\\n' }}" +
+    "{% endif %}" +
+    "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}" +
+    "{% endfor %}" +
+    "{% if add_generation_prompt %}" +
+    "{{ '<|im_start|>assistant\\n' }}" +
+    "{% endif %}";
+
 const workerCode = `
 import {
     pipeline,
-    AutoTokenizer,
     env
 } from "${TRANSFORMERS_URL}";
 
@@ -21,33 +32,24 @@ env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
 let generator = null;
-let tokenizer = null;
 let loading = false;
-
-const CHAT_TEMPLATE =
-"{% for message in messages %}" +
-"{% if loop.first and messages[0]['role'] != 'system' %}" +
-"{{ '<|im_start|>system\\\\nYou are a helpful AI assistant named SmolLM<|im_end|>\\\\n' }}" +
-"{% endif %}" +
-"{{ '<|im_start|>' + message['role'] + '\\\\n' + message['content'] + '<|im_end|>\\\\n' }}" +
-"{% endfor %}" +
-"{% if add_generation_prompt %}" +
-"{{ '<|im_start|>assistant\\\\n' }}" +
-"{% endif %}";
 
 self.onmessage = async (event) => {
     const data = event.data;
 
     try {
         if (data.type === "load") {
-            if (generator && tokenizer) {
+            if (generator) {
                 self.postMessage({
                     type: "loaded"
                 });
+
                 return;
             }
 
-            if (loading) return;
+            if (loading) {
+                return;
+            }
 
             loading = true;
 
@@ -55,12 +57,6 @@ self.onmessage = async (event) => {
                 type: "status",
                 text: "Carregando modelo..."
             });
-
-            tokenizer = await AutoTokenizer.from_pretrained(
-                "${MODEL}"
-            );
-
-            tokenizer.chat_template = CHAT_TEMPLATE;
 
             generator = await pipeline(
                 "text-generation",
@@ -81,15 +77,11 @@ self.onmessage = async (event) => {
         }
 
         if (data.type === "generate") {
-            if (!generator || !tokenizer) {
+            if (!generator) {
                 throw new Error(
                     "Modelo ainda não foi carregado."
                 );
             }
-
-            const userText = String(
-                data.prompt || ""
-            );
 
             const messages = [
                 {
@@ -102,27 +94,27 @@ self.onmessage = async (event) => {
                 },
                 {
                     role: "user",
-                    content: userText
+                    content: String(
+                        data.prompt || ""
+                    )
                 }
             ];
 
-            const prompt =
-                tokenizer.apply_chat_template(
-                    messages,
-                    {
-                        tokenize: false,
-                        add_generation_prompt: true
-                    }
-                );
-
             const result = await generator(
-                prompt,
+                messages,
                 {
                     max_new_tokens: 80,
+
                     do_sample: true,
+
                     temperature: 0.7,
+
                     top_p: 0.9,
-                    repetition_penalty: 1.05
+
+                    repetition_penalty: 1.05,
+
+                    chat_template:
+                        ${JSON.stringify(CHAT_TEMPLATE)}
                 }
             );
 
@@ -132,19 +124,34 @@ self.onmessage = async (event) => {
                 Array.isArray(result) &&
                 result.length > 0
             ) {
+                const generated =
+                    result[0]?.generated_text;
+
+                if (Array.isArray(generated)) {
+                    const last =
+                        generated[
+                            generated.length - 1
+                        ];
+
+                    if (
+                        last &&
+                        typeof last.content === "string"
+                    ) {
+                        text = last.content;
+                    }
+                } else if (
+                    typeof generated === "string"
+                ) {
+                    text = generated;
+                }
+            }
+
+            text = String(text).trim();
+
+            if (!text) {
                 text =
-                    result[0]?.generated_text || "";
+                    "Não consegui gerar uma resposta.";
             }
-
-            if (typeof text !== "string") {
-                text = String(text);
-            }
-
-            if (text.startsWith(prompt)) {
-                text = text.slice(prompt.length);
-            }
-
-            text = text.trim();
 
             self.postMessage({
                 type: "result",
@@ -156,8 +163,13 @@ self.onmessage = async (event) => {
 
         self.postMessage({
             type: "error",
-            error: error?.message || String(error),
-            stack: error?.stack || ""
+            error:
+                error?.message ||
+                String(error),
+
+            stack:
+                error?.stack ||
+                ""
         });
     }
 };
@@ -181,13 +193,18 @@ let modelReady = false;
 let generating = false;
 
 function addMessage(text, type) {
-    const div = document.createElement("div");
+    const div =
+        document.createElement("div");
 
-    div.className = \`message \${type}\`;
+    div.className =
+        `message ${type}`;
+
     div.textContent = text;
 
     chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
+
+    chat.scrollTop =
+        chat.scrollHeight;
 
     return div;
 }
@@ -223,16 +240,21 @@ worker.onmessage = (event) => {
 
         setStatus("Online");
 
-        let answer = data.text || "";
+        let answer =
+            data.text || "";
 
-        answer = String(answer).trim();
+        answer =
+            String(answer).trim();
 
         if (!answer) {
             answer =
                 "Não consegui gerar uma resposta.";
         }
 
-        addMessage(answer, "ai");
+        addMessage(
+            answer,
+            "ai"
+        );
 
         return;
     }
@@ -265,19 +287,25 @@ worker.onmessage = (event) => {
 };
 
 function sendMessage() {
-    if (generating) return;
+    if (generating) {
+        return;
+    }
 
     if (!modelReady) {
         addMessage(
             "O modelo ainda está carregando.",
             "ai"
         );
+
         return;
     }
 
-    const text = input.value.trim();
+    const text =
+        input.value.trim();
 
-    if (!text) return;
+    if (!text) {
+        return;
+    }
 
     addMessage(
         text,
@@ -291,7 +319,9 @@ function sendMessage() {
     sendButton.disabled = true;
     input.disabled = true;
 
-    setStatus("Pensando...");
+    setStatus(
+        "Pensando..."
+    );
 
     worker.postMessage({
         type: "generate",
@@ -312,6 +342,7 @@ input.addEventListener(
             !event.shiftKey
         ) {
             event.preventDefault();
+
             sendMessage();
         }
     }
