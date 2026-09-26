@@ -4,7 +4,7 @@ import {
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
 const MODEL =
-    "onnx-community/Qwen2.5-0.5B-Instruct-ONNX-MHA";
+    "onnx-community/Qwen2.5-0.5B-Instruct";
 
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
@@ -22,27 +22,52 @@ Sua personalidade:
 - curiosa
 - paciente
 
-Regras:
-- Responda em português brasileiro.
-- Responda de forma natural.
-- Use frases claras e fáceis de entender.
-- Não repita palavras ou frases sem necessidade.
-- Não invente informações.
-- Se não souber algo, diga que não sabe.
-- Não fique repetindo a pergunta do usuário.
-- Não faça listas quando uma resposta normal for melhor.
-- Não fale sobre seu funcionamento interno, a menos que o usuário pergunte.
-- Você não é uma pessoa humana.
+Regras importantes:
+
+Responda sempre em português brasileiro.
+
+Use palavras normais e frases naturais.
+
+Se o usuário fizer uma pergunta simples,
+responda de forma simples.
+
+Não repita palavras ou frases sem necessidade.
+
+Não escreva palavras inventadas.
+
+Não misture idiomas.
+
+Não fique repetindo a mesma palavra.
+
+Não copie a mensagem do usuário.
+
+Não invente informações.
+
+Se não souber algo, diga que não sabe.
+
+Não fale sobre seu funcionamento interno,
+a menos que o usuário pergunte.
+
+Você não é uma pessoa humana.
 `;
 
 let generator = null;
 let generating = false;
 
-const chat = document.getElementById("chat");
-const input = document.getElementById("messageInput");
-const sendButton = document.getElementById("sendButton");
-const clearButton = document.getElementById("clearButton");
-const status = document.getElementById("status");
+const chat =
+    document.getElementById("chat");
+
+const input =
+    document.getElementById("messageInput");
+
+const sendButton =
+    document.getElementById("sendButton");
+
+const clearButton =
+    document.getElementById("clearButton");
+
+const status =
+    document.getElementById("status");
 
 let memory = JSON.parse(
     localStorage.getItem("luna_memory") || "{}"
@@ -80,7 +105,9 @@ function addMessage(text, type) {
     element.textContent = text;
 
     chat.appendChild(element);
-    chat.scrollTop = chat.scrollHeight;
+
+    chat.scrollTop =
+        chat.scrollHeight;
 
     return element;
 }
@@ -97,10 +124,15 @@ function loadHistory() {
 }
 
 function progressCallback(progress) {
-    if (!progress) return;
+    if (!progress) {
+        return;
+    }
 
     if (progress.status === "initiate") {
-        setStatus("Iniciando download...");
+        setStatus(
+            "Iniciando download..."
+        );
+
         return;
     }
 
@@ -115,19 +147,25 @@ function progressCallback(progress) {
                 "%"
             );
         } else {
-            setStatus("Baixando IA...");
+            setStatus(
+                "Baixando IA..."
+            );
         }
 
         return;
     }
 
     if (progress.status === "done") {
-        setStatus("Finalizando...");
+        setStatus(
+            "Finalizando..."
+        );
     }
 }
 
 async function loadModel() {
-    setStatus("Preparando IA...");
+    setStatus(
+        "Preparando IA..."
+    );
 
     try {
         setStatus(
@@ -146,7 +184,9 @@ async function loadModel() {
                 }
             );
 
-        setStatus("Online - CPU");
+        setStatus(
+            "Online - CPU"
+        );
 
         addMessage(
             "Luna está online.",
@@ -242,14 +282,11 @@ async function generate(userMessage) {
                 PERSONALITY +
                 `
 
-Memória atual:
+Memória da Luna:
 
 ${memoryText}
 
-Responda somente ao usuário.
-Não escreva instruções.
-Não continue a conversa sozinho.
-Não invente outra pessoa falando.
+Agora responda apenas ao usuário.
 `
         },
         ...recentHistory
@@ -282,7 +319,8 @@ Não invente outra pessoa falando.
             output[0]
         ) {
             const generated =
-                output[0].generated_text;
+                output[0]
+                    .generated_text;
 
             if (
                 Array.isArray(
