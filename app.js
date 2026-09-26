@@ -179,6 +179,26 @@ function cleanAnswer(text) {
         .trim();
 }
 
+function localReply(text) {
+    const normalized = String(text || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[!?.,;:]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    if (
+        /^(oi|ola|bom dia|boa tarde|boa noite)( luna)?$/.test(normalized) ||
+        normalized === "oi luna" ||
+        normalized === "ola luna"
+    ) {
+        return "Olá! Como posso ajudar você hoje?";
+    }
+
+    return "";
+}
+
 function extractAnswer(output) {
     if (!output || !Array.isArray(output) || !output[0]) {
         return "";
@@ -445,6 +465,20 @@ async function generate(userMessage) {
     const messages = makeMessages();
 
     try {
+        const immediateAnswer = localReply(userMessage);
+
+        if (immediateAnswer) {
+            thinking.remove();
+            addMessage(immediateAnswer, "ai");
+
+            history.push({
+                role: "assistant",
+                content: immediateAnswer
+            });
+            saveHistory();
+            return;
+        }
+
         const output = await requestGeneration(messages);
         const answer = cleanAnswer(extractAnswer(output)) ||
             "Não consegui gerar uma resposta.";
