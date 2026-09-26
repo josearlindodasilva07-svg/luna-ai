@@ -7,19 +7,17 @@ const MODEL =
     "onnx-community/Qwen2.5-0.5B-Instruct";
 
 /*
- * Configuração conservadora para Chrome Android.
- *
- * Uma thread evita a multiplicação de buffers e o pico de RAM
- * que pode ocorrer com WASM multithread em aparelhos móveis.
- * O modelo é carregado somente uma vez e permanece em memória.
+ * O proxy é essencial no Chrome Android: a inferência acontece em um
+ * worker, e não na thread que desenha a interface.
  */
 env.backends.onnx.wasm.numThreads = 1;
-/*
- * Nunca execute a inferência pesada na thread principal do navegador.
- * Com false, o Chrome Android pode parecer travado durante a segunda
- * geração, mesmo que o modelo ainda esteja funcionando.
- */
 env.backends.onnx.wasm.proxy = true;
+
+const MODEL_DTYPE = "q4";
+const MAX_NEW_TOKENS = 32;
+const MAX_PROMPT_CHARS = 3000;
+const MAX_MEMORY_CHARS = 600;
+const MAX_STORED_MESSAGES = 200;
 
 const PERSONALITY = `
 Você é Luna, uma inteligência artificial.
@@ -34,7 +32,7 @@ Sua personalidade:
 - curiosa
 - paciente
 
-Regras importantes:
+Regras:
 - Responda sempre em português brasileiro.
 - Use palavras normais e frases naturais.
 - Se a pergunta for simples, responda de forma simples.
@@ -44,19 +42,8 @@ Regras importantes:
 - Não copie a mensagem do usuário.
 - Não invente informações.
 - Se não souber algo, diga que não sabe.
-- Não fale sobre seu funcionamento interno, a menos que o usuário pergunte.
 - Você não é uma pessoa humana.
 `;
-
-/* Limites deliberados para o hardware móvel. */
-const MAX_GENERATED_TOKENS = 32;
-const MAX_CONTEXT_CHARS = 3000;
-const MAX_MEMORY_CHARS = 600;
-const MAX_SAVED_HISTORY_ITEMS = 200;
-
-let generator = null;
-let modelLoading = false;
-let generating = false;
 
 const chat = document.getElementById("chat");
 const input = document.getElementById("messageInput");
@@ -64,8 +51,11 @@ const sendButton = document.getElementById("sendButton");
 const clearButton = document.getElementById("clearButton");
 const status = document.getElementById("status");
 
-let memory = readJson("luna_memory", {});
-let history = readJson("luna_history", []);
+let generator = null;
+let loading = false;
+let generating = false;
+let memory = loadJson("luna_memory", {});
+let history = loadJson("luna_history", []);
 
 if (!memory || typeof memory !== "object" || Array.isArray(memory)) {
     memory = {};
@@ -75,21 +65,40 @@ if (!Array.isArray(history)) {
     history = [];
 }
 
-function readJson(key, fallback) {
+function loadJson(key, fallback) {
     try {
-        const value = JSON.parse(
+        return JSON.parse(
             localStorage.getItem(key) || JSON.stringify(fallback)
         );
-
-        return value;
     } catch (error) {
-        console.warn(`Dados locais inválidos em ${key}.`, error);
+        console.warn(`Falha ao ler ${key}.`, error);
         return fallback;
     }
 }
 
 function setStatus(text) {
     status.textContent = text;
+}
+
+function errorText(error) {
+    return error && error.message
+        ? error.message
+        : String(error || "Erro desconhecido");
+}
+
+function saveHistory() {
+    if (history.length > MAX_STORED_MESSAGES) {
+        history = history.slice(-MAX_STORED_MESSAGES);
+    }
+
+    try {
+        localStorage.setItem(
+            "luna_history",
+            JSON.stringify(history)
+        );
+    } catch (error) {
+        console.warn("Falha ao salvar histórico local.", error);
+    }
 }
 
 function saveMemory() {
@@ -99,51 +108,28 @@ function saveMemory() {
             JSON.stringify(memory)
         );
     } catch (error) {
-        console.warn("Não foi possível salvar a memória local.", error);
-    }
-}
-
-function saveHistory() {
-    /*
-     * O histórico completo continua local, mas é limitado para evitar
-     * que localStorage cresça indefinidamente e cause serializações
-     * grandes a cada envio.
-     */
-    if (history.length > MAX_SAVED_HISTORY_ITEMS) {
-        history = history.slice(-MAX_SAVED_HISTORY_ITEMS);
-    }
-
-    try {
-        localStorage.setItem(
-            "luna_history",
-            JSON.stringify(history)
-        );
-    } catch (error) {
-        console.warn("Não foi possível salvar o histórico local.", error);
+        console.warn("Falha ao salvar memória local.", error);
     }
 }
 
 function addMessage(text, type) {
     const element = document.createElement("div");
-
     element.className = `message ${type}`;
     element.textContent = String(text || "");
-
     chat.appendChild(element);
     chat.scrollTop = chat.scrollHeight;
-
     return element;
 }
 
 function loadHistory() {
-    for (const message of history) {
-        if (!message || typeof message.content !== "string") {
+    for (const item of history) {
+        if (!item || typeof item.content !== "string") {
             continue;
         }
 
         addMessage(
-            message.content,
-            message.role === "user" ? "user" : "ai"
+            item.content,
+            item.role === "user" ? "user" : "ai"
         );
     }
 }
@@ -160,13 +146,11 @@ function progressCallback(progress) {
 
     if (progress.status === "progress") {
         const value = Number(progress.progress);
-
         setStatus(
             Number.isFinite(value)
                 ? `Baixando IA... ${Math.round(value)}%`
                 : "Baixando IA..."
         );
-
         return;
     }
 
@@ -176,22 +160,20 @@ function progressCallback(progress) {
 }
 
 async function loadModel() {
-    if (generator || modelLoading) {
+    if (generator || loading) {
         return;
     }
 
-    modelLoading = true;
+    loading = true;
     setStatus("Preparando IA...");
 
     try {
-        setStatus("Iniciando Luna pela CPU...");
-
         generator = await pipeline(
             "text-generation",
             MODEL,
             {
                 device: "wasm",
-                dtype: "q8",
+                dtype: MODEL_DTYPE,
                 progress_callback: progressCallback
             }
         );
@@ -199,35 +181,22 @@ async function loadModel() {
         setStatus("Online - CPU WASM worker");
         addMessage("Luna está online.", "ai");
     } catch (error) {
-        console.error("ERRO COMPLETO AO CARREGAR O MODELO:", error);
-
         generator = null;
         setStatus("Erro ao carregar IA");
-
-        addMessage(
-            `ERRO REAL:\n\n${getErrorText(error)}`,
-            "ai"
-        );
+        console.error("ERRO AO CARREGAR MODELO:", error);
+        addMessage(`ERRO REAL:\n\n${errorText(error)}`, "ai");
     } finally {
-        modelLoading = false;
+        loading = false;
     }
 }
 
-function getErrorText(error) {
-    if (error && error.message) {
-        return error.message;
-    }
-
-    return String(error || "Erro desconhecido");
-}
-
-function getMemoryText() {
-    let text;
+function memoryForPrompt() {
+    let text = "{}";
 
     try {
         text = JSON.stringify(memory);
     } catch (error) {
-        text = "{}";
+        console.warn("Memória não serializável.", error);
     }
 
     if (!text || text === "{}") {
@@ -237,62 +206,57 @@ function getMemoryText() {
     return text.slice(0, MAX_MEMORY_CHARS);
 }
 
-function isValidChatMessage(message) {
+function validMessage(item) {
     return Boolean(
-        message &&
-        (message.role === "user" || message.role === "assistant") &&
-        typeof message.content === "string" &&
-        message.content.trim()
+        item &&
+        (item.role === "user" || item.role === "assistant") &&
+        typeof item.content === "string" &&
+        item.content.trim().length > 0
     );
 }
 
-function getPromptHistory() {
-    /*
-     * O histórico local não é apagado. Apenas uma janela curta é enviada
-     * ao modelo para impedir que o prompt e o KV cache cresçam a cada turno.
-     * O limite é por caracteres, uma aproximação segura para tokens.
-     */
+function promptHistory() {
     const selected = [];
-    let usedChars = 0;
+    let size = 0;
 
-    for (let index = history.length - 1; index >= 0; index -= 1) {
-        const message = history[index];
+    for (let i = history.length - 1; i >= 0; i -= 1) {
+        const item = history[i];
 
-        if (!isValidChatMessage(message)) {
+        if (!validMessage(item)) {
             continue;
         }
 
-        const content = message.content.trim();
-        const cost = content.length + 40;
+        const content = item.content.trim();
+        const itemSize = content.length + 40;
 
         if (
             selected.length > 0 &&
-            usedChars + cost > MAX_CONTEXT_CHARS
+            size + itemSize > MAX_PROMPT_CHARS
         ) {
             break;
         }
 
         selected.push({
-            role: message.role,
-            content: content
+            role: item.role,
+            content
         });
 
-        usedChars += cost;
+        size += itemSize;
     }
 
     return selected.reverse();
 }
 
-function buildMessages() {
+function makeMessages() {
     return [
         {
             role: "system",
             content:
                 `${PERSONALITY}\n\n` +
-                `Memória da Luna:\n${getMemoryText()}\n\n` +
-                "Responda apenas à última mensagem do usuário."
+                `Memória da Luna:\n${memoryForPrompt()}\n\n` +
+                "Responda somente à última mensagem do usuário."
         },
-        ...getPromptHistory()
+        ...promptHistory()
     ];
 }
 
@@ -304,15 +268,15 @@ function extractAnswer(output) {
     const generated = output[0].generated_text;
 
     if (Array.isArray(generated)) {
-        for (let index = generated.length - 1; index >= 0; index -= 1) {
-            const message = generated[index];
+        for (let i = generated.length - 1; i >= 0; i -= 1) {
+            const item = generated[i];
 
             if (
-                message &&
-                message.role === "assistant" &&
-                typeof message.content === "string"
+                item &&
+                item.role === "assistant" &&
+                typeof item.content === "string"
             ) {
-                return message.content.trim();
+                return item.content.trim();
             }
         }
 
@@ -325,11 +289,7 @@ function extractAnswer(output) {
 }
 
 function cleanAnswer(text) {
-    if (!text) {
-        return "";
-    }
-
-    return String(text)
+    return String(text || "")
         .replace(/^assistant\s*:\s*/i, "")
         .replace(/^luna\s*:\s*/i, "")
         .replace(/<\|im_end\|>[\s\S]*$/g, "")
@@ -337,38 +297,47 @@ function cleanAnswer(text) {
         .trim();
 }
 
+function setBusy(value) {
+    generating = value;
+    sendButton.disabled = value;
+    input.disabled = value;
+}
+
 async function generate(userMessage) {
-    /* Guarda contra cliques rápidos e chamadas simultâneas. */
-    if (!generator || generating || modelLoading) {
+    if (!generator || loading || generating) {
         return;
     }
 
-    generating = true;
-    sendButton.disabled = true;
-    input.disabled = true;
+    setBusy(true);
 
+    /*
+     * A mensagem é inserida uma única vez no histórico, antes da chamada.
+     * O elemento visual já foi criado pelo handler do botão.
+     */
     history.push({
         role: "user",
         content: userMessage
     });
-
     saveHistory();
 
     const thinking = addMessage("Pensando...", "ai");
-    let output = null;
+    const messages = makeMessages();
 
     try {
         /*
-         * O modelo é reutilizado. Ele não é carregado novamente aqui.
-         * O chat template oficial do Qwen é aplicado pelo tokenizer.
+         * Importante: não usar use_cache:false.
+         * Sem o KV cache, o modelo recalcula o prompt inteiro a cada token,
+         * aumentando muito o uso de CPU e dando a impressão de congelamento.
+         * O padrão use_cache:true mantém o cache somente durante esta chamada
+         * e o pipeline o descarta ao terminar.
          */
-        output = await generator(
-            buildMessages(),
+        const output = await generator(
+            messages,
             {
-                max_new_tokens: MAX_GENERATED_TOKENS,
+                max_new_tokens: MAX_NEW_TOKENS,
                 do_sample: false,
                 return_full_text: false,
-                use_cache: false,
+                use_cache: true,
                 eos_token_id: [151645, 151643],
                 pad_token_id: 151643
             }
@@ -384,71 +353,72 @@ async function generate(userMessage) {
             role: "assistant",
             content: answer
         });
-
         saveHistory();
     } catch (error) {
-        console.error("ERRO AO RESPONDER:", error);
-
+        console.error("ERRO DURANTE A GERAÇÃO:", error);
         thinking.remove();
         addMessage(
-            `ERRO AO RESPONDER:\n\n${getErrorText(error)}`,
+            `ERRO AO RESPONDER:\n\n${errorText(error)}`,
             "ai"
         );
     } finally {
-        /*
-         * Não chamar dispose() aqui: isso destruiria os pesos do modelo
-         * e obrigaria um novo carregamento. Apenas removemos a referência
-         * ao resultado temporário para facilitar a coleta de lixo.
-         */
-        output = null;
-        generating = false;
-        sendButton.disabled = false;
-        input.disabled = false;
+        setBusy(false);
         input.focus();
     }
 }
 
-sendButton.addEventListener("click", async () => {
-    const message = input.value.trim();
-
-    if (!message || generating || modelLoading) {
+async function handleSend() {
+    /*
+     * O handler retorna antes de tocar no modelo se ainda estiver ocupado.
+     * Isso evita duas chamadas de generator no mesmo pipeline.
+     */
+    if (loading || generating || !generator) {
+        if (!generator && !loading) {
+            addMessage(
+                "A Luna ainda não terminou de carregar.",
+                "ai"
+            );
+        }
         return;
     }
 
-    if (!generator) {
-        addMessage(
-            "A Luna ainda não terminou de carregar.",
-            "ai"
-        );
+    const message = input.value.trim();
+
+    if (!message) {
         return;
     }
 
     input.value = "";
     addMessage(message, "user");
 
+    /* Deixa o navegador pintar a mensagem antes do trabalho do generator. */
+    await new Promise(resolve => setTimeout(resolve, 0));
     await generate(message);
-});
+}
+
+sendButton.addEventListener("click", handleSend);
 
 input.addEventListener("keydown", event => {
     if (
         event.key === "Enter" &&
-        !event.shiftKey &&
-        !generating
+        !event.shiftKey
     ) {
         event.preventDefault();
-        sendButton.click();
+
+        if (!generating && !loading) {
+            handleSend();
+        }
     }
 });
 
 clearButton.addEventListener("click", () => {
-    if (generating) {
+    if (generating || loading) {
         return;
     }
 
     history = [];
     saveHistory();
     chat.innerHTML = "";
-
     setStatus(
         generator
             ? "Online - CPU WASM worker"
