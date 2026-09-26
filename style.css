@@ -7,7 +7,7 @@
     font-family: Arial, sans-serif;
 }
 
-/* v11: evita que o navegador reutilize folhas antigas no GitHub Pages. */
+/* v12: evita que o navegador reutilize folhas antigas no GitHub Pages. */
 
 html,
 body {
