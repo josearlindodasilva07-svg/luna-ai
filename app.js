@@ -10,17 +10,6 @@ const sendButton = document.getElementById("sendButton");
 const clearButton = document.getElementById("clearButton");
 const status = document.getElementById("status");
 
-const CHAT_TEMPLATE =
-    "{% for message in messages %}" +
-    "{% if loop.first and messages[0]['role'] != 'system' %}" +
-    "{{ '<|im_start|>system\\nYou are a helpful AI assistant named SmolLM, trained by Hugging Face<|im_end|>\\n' }}" +
-    "{% endif %}" +
-    "{{ '<|im_start|>' + message['role'] + '\\n' + message['content'] + '<|im_end|>\\n' }}" +
-    "{% endfor %}" +
-    "{% if add_generation_prompt %}" +
-    "{{ '<|im_start|>assistant\\n' }}" +
-    "{% endif %}";
-
 const workerCode = `
 import {
     pipeline,
@@ -39,6 +28,7 @@ self.onmessage = async (event) => {
 
     try {
         if (data.type === "load") {
+
             if (generator) {
                 self.postMessage({
                     type: "loaded"
@@ -77,31 +67,40 @@ self.onmessage = async (event) => {
         }
 
         if (data.type === "generate") {
+
             if (!generator) {
                 throw new Error(
                     "Modelo ainda não foi carregado."
                 );
             }
 
-            const messages = [
-                {
-                    role: "system",
-                    content:
-                        "Você é Luna, uma assistente de IA. " +
-                        "Responda em português do Brasil. " +
-                        "Seja natural, direta e útil. " +
-                        "Não invente informações."
-                },
-                {
-                    role: "user",
-                    content: String(
-                        data.prompt || ""
-                    )
-                }
-            ];
+            const userText =
+                String(data.prompt || "").trim();
+
+            /*
+             * Template oficial do
+             * SmolLM2-135M-Instruct.
+             *
+             * Aqui NÃO usamos messages.
+             * O pipeline recebe somente uma string.
+             */
+
+            const prompt =
+                "<|im_start|>system\\n" +
+                "Você é Luna, uma assistente de IA. " +
+                "Responda em português do Brasil. " +
+                "Seja natural, direta e útil. " +
+                "Não invente informações." +
+                "<|im_end|>\\n" +
+
+                "<|im_start|>user\\n" +
+                userText +
+                "<|im_end|>\\n" +
+
+                "<|im_start|>assistant\\n";
 
             const result = await generator(
-                messages,
+                prompt,
                 {
                     max_new_tokens: 80,
 
@@ -113,8 +112,7 @@ self.onmessage = async (event) => {
 
                     repetition_penalty: 1.05,
 
-                    chat_template:
-                        ${JSON.stringify(CHAT_TEMPLATE)}
+                    return_full_text: false
                 }
             );
 
@@ -124,29 +122,27 @@ self.onmessage = async (event) => {
                 Array.isArray(result) &&
                 result.length > 0
             ) {
-                const generated =
-                    result[0]?.generated_text;
-
-                if (Array.isArray(generated)) {
-                    const last =
-                        generated[
-                            generated.length - 1
-                        ];
-
-                    if (
-                        last &&
-                        typeof last.content === "string"
-                    ) {
-                        text = last.content;
-                    }
-                } else if (
-                    typeof generated === "string"
-                ) {
-                    text = generated;
-                }
+                text =
+                    result[0]?.generated_text || "";
             }
 
             text = String(text).trim();
+
+            /*
+             * Remove possíveis marcadores
+             * que o modelo possa devolver.
+             */
+
+            text = text
+                .replace(
+                    /^<\\|im_start\\|>assistant\\s*/i,
+                    ""
+                )
+                .replace(
+                    /<\\|im_end\\|>[\\s\\S]*$/i,
+                    ""
+                )
+                .trim();
 
             if (!text) {
                 text =
@@ -158,11 +154,14 @@ self.onmessage = async (event) => {
                 text
             });
         }
+
     } catch (error) {
+
         loading = false;
 
         self.postMessage({
             type: "error",
+
             error:
                 error?.message ||
                 String(error),
@@ -193,11 +192,12 @@ let modelReady = false;
 let generating = false;
 
 function addMessage(text, type) {
+
     const div =
         document.createElement("div");
 
     div.className =
-        `message ${type}`;
+        "message " + type;
 
     div.textContent = text;
 
@@ -214,14 +214,18 @@ function setStatus(text) {
 }
 
 worker.onmessage = (event) => {
+
     const data = event.data;
 
     if (data.type === "status") {
+
         setStatus(data.text);
+
         return;
     }
 
     if (data.type === "loaded") {
+
         modelReady = true;
 
         setStatus("Online");
@@ -233,6 +237,7 @@ worker.onmessage = (event) => {
     }
 
     if (data.type === "result") {
+
         generating = false;
 
         sendButton.disabled = false;
@@ -247,6 +252,7 @@ worker.onmessage = (event) => {
             String(answer).trim();
 
         if (!answer) {
+
             answer =
                 "Não consegui gerar uma resposta.";
         }
@@ -260,6 +266,7 @@ worker.onmessage = (event) => {
     }
 
     if (data.type === "error") {
+
         generating = false;
 
         sendButton.disabled = false;
@@ -287,11 +294,13 @@ worker.onmessage = (event) => {
 };
 
 function sendMessage() {
+
     if (generating) {
         return;
     }
 
     if (!modelReady) {
+
         addMessage(
             "O modelo ainda está carregando.",
             "ai"
@@ -337,10 +346,12 @@ sendButton.addEventListener(
 input.addEventListener(
     "keydown",
     (event) => {
+
         if (
             event.key === "Enter" &&
             !event.shiftKey
         ) {
+
             event.preventDefault();
 
             sendMessage();
@@ -351,6 +362,7 @@ input.addEventListener(
 clearButton.addEventListener(
     "click",
     () => {
+
         chat.innerHTML = "";
     }
 );
