@@ -40,7 +40,7 @@ try {
             MODEL,
             {
                 device: "wasm",
-                dtype: "q4"
+                dtype: "q8"
             }
         );
 
