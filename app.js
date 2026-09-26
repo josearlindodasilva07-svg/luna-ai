@@ -3,26 +3,11 @@ import {
     env
 } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
 
-
-// ============================================================
-// MODELO
-// ============================================================
-
 const MODEL =
     "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
 
-
-// ============================================================
-// CONFIGURAÇÃO WASM
-// ============================================================
-
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
-
-
-// ============================================================
-// PERSONALIDADE
-// ============================================================
 
 const PERSONALITY = `
 Você é uma inteligência artificial chamada Luna.
@@ -38,50 +23,27 @@ Sua personalidade:
 - curiosa
 - paciente
 
-Você não é uma pessoa humana.
+Regras importantes:
 
-Não invente informações.
-
-Se não souber algo, diga que não sabe.
-
-Responda de maneira natural e fácil de entender.
-
-Não fale sobre seu funcionamento interno
-a menos que o usuário pergunte.
+- Responda de forma clara e natural.
+- Use frases simples.
+- Não repita palavras ou frases sem motivo.
+- Não fique repetindo a mesma ideia.
+- Não invente informações.
+- Se não souber algo, diga que não sabe.
+- Não escreva listas quando uma resposta normal for suficiente.
+- Não fale sobre seu funcionamento interno a menos que o usuário pergunte.
+- Não diga que é humana.
 `;
-
-
-// ============================================================
-// VARIÁVEIS
-// ============================================================
 
 let generator = null;
 let generating = false;
 
-
-// ============================================================
-// ELEMENTOS
-// ============================================================
-
-const chat =
-    document.getElementById("chat");
-
-const input =
-    document.getElementById("messageInput");
-
-const sendButton =
-    document.getElementById("sendButton");
-
-const clearButton =
-    document.getElementById("clearButton");
-
-const status =
-    document.getElementById("status");
-
-
-// ============================================================
-// MEMÓRIA
-// ============================================================
+const chat = document.getElementById("chat");
+const input = document.getElementById("messageInput");
+const sendButton = document.getElementById("sendButton");
+const clearButton = document.getElementById("clearButton");
+const status = document.getElementById("status");
 
 let memory = JSON.parse(
     localStorage.getItem("luna_memory") || "{}"
@@ -91,330 +53,157 @@ let history = JSON.parse(
     localStorage.getItem("luna_history") || "[]"
 );
 
-
-// ============================================================
-// SALVAR MEMÓRIA
-// ============================================================
-
 function saveMemory() {
-
     localStorage.setItem(
         "luna_memory",
         JSON.stringify(memory)
     );
-
 }
 
-
-// ============================================================
-// SALVAR HISTÓRICO
-// ============================================================
-
 function saveHistory() {
-
     localStorage.setItem(
         "luna_history",
         JSON.stringify(history)
     );
-
 }
-
-
-// ============================================================
-// STATUS
-// ============================================================
 
 function setStatus(text) {
-
     status.textContent = text;
-
 }
 
-
-// ============================================================
-// ADICIONAR MENSAGEM
-// ============================================================
-
-function addMessage(
-    text,
-    type
-) {
-
+function addMessage(text, type) {
     const element =
         document.createElement("div");
 
-    element.className =
-        "message " + type;
-
-    element.textContent =
-        text;
+    element.className = "message " + type;
+    element.textContent = text;
 
     chat.appendChild(element);
-
-    chat.scrollTop =
-        chat.scrollHeight;
+    chat.scrollTop = chat.scrollHeight;
 
     return element;
-
 }
 
-
-// ============================================================
-// HISTÓRICO
-// ============================================================
-
 function loadHistory() {
-
-    for (
-        const message
-        of history
-    ) {
-
+    for (const message of history) {
         addMessage(
             message.content,
             message.role === "user"
                 ? "user"
                 : "ai"
         );
-
     }
-
 }
 
-
-// ============================================================
-// MOSTRAR PROGRESSO
-// ============================================================
-
 function progressCallback(progress) {
+    if (!progress) return;
 
-    if (!progress) {
+    if (progress.status === "initiate") {
+        setStatus("Iniciando download...");
         return;
     }
 
+    if (progress.status === "progress") {
+        const value = Number(progress.progress);
 
-    if (
-        progress.status === "initiate"
-    ) {
-
-        setStatus(
-            "Iniciando download..."
-        );
-
-        return;
-    }
-
-
-    if (
-        progress.status === "progress"
-    ) {
-
-        const value =
-            Number(progress.progress);
-
-
-        if (
-            Number.isFinite(value)
-        ) {
-
+        if (Number.isFinite(value)) {
             setStatus(
                 "Baixando IA... " +
                 Math.round(value) +
                 "%"
             );
-
         } else {
-
-            setStatus(
-                "Baixando IA..."
-            );
-
+            setStatus("Baixando IA...");
         }
 
         return;
     }
 
-
-    if (
-        progress.status === "done"
-    ) {
-
-        setStatus(
-            "Finalizando..."
-        );
-
+    if (progress.status === "done") {
+        setStatus("Finalizando...");
     }
-
 }
 
-
-// ============================================================
-// CARREGAR MODELO
-// ============================================================
-
 async function loadModel() {
-
-    setStatus(
-        "Preparando IA..."
-    );
-
+    setStatus("Preparando IA...");
 
     try {
-
-        setStatus(
-            "Iniciando IA pela CPU..."
-        );
-
+        setStatus("Iniciando IA pela CPU...");
 
         generator =
             await pipeline(
                 "text-generation",
                 MODEL,
                 {
-
                     device: "wasm",
-
                     dtype: "q4",
-
                     progress_callback:
                         progressCallback
-
                 }
             );
 
-
-        setStatus(
-            "Online - CPU"
-        );
-
+        setStatus("Online - CPU");
 
         addMessage(
             "Luna está online.",
             "ai"
         );
 
-
     } catch (error) {
-
         console.error(
             "ERRO COMPLETO:",
             error
         );
 
-
         generator = null;
-
 
         setStatus(
             "Erro ao carregar IA"
         );
 
-
-        // ----------------------------------------------------
-        // MOSTRAR O ERRO REAL NA TELA
-        // ----------------------------------------------------
-
         let errorText =
             "Erro desconhecido";
 
-
-        if (
-            error &&
-            error.message
-        ) {
-
-            errorText =
-                error.message;
-
-        } else if (
-            typeof error === "string"
-        ) {
-
-            errorText =
-                error;
-
+        if (error && error.message) {
+            errorText = error.message;
+        } else if (typeof error === "string") {
+            errorText = error;
         }
-
 
         addMessage(
             "ERRO REAL:\n\n" +
             errorText,
             "ai"
         );
-
     }
-
 }
 
-
-// ============================================================
-// GERAR RESPOSTA
-// ============================================================
-
-async function generate(
-    userMessage
-) {
-
-    if (
-        !generator ||
-        generating
-    ) {
-
+async function generate(userMessage) {
+    if (!generator || generating) {
         return;
-
     }
 
-
     generating = true;
-
     sendButton.disabled = true;
 
-
-    // --------------------------------------------------------
-    // SALVAR USUÁRIO
-    // --------------------------------------------------------
-
     history.push({
-
         role: "user",
-
-        content:
-            userMessage
-
+        content: userMessage
     });
 
-
     saveHistory();
-
-
-    // --------------------------------------------------------
-    // MEMÓRIA
-    // --------------------------------------------------------
 
     const memoryText =
         Object.keys(memory).length
             ? JSON.stringify(memory)
             : "Nenhuma memória";
 
-
-    // --------------------------------------------------------
-    // HISTÓRICO
-    // --------------------------------------------------------
-
     const recentHistory =
-        history.slice(-10);
-
-
-    // --------------------------------------------------------
-    // MENSAGENS
-    // --------------------------------------------------------
+        history.slice(-8);
 
     const messages = [
-
         {
-
             role: "system",
-
             content:
                 PERSONALITY +
                 `
@@ -422,14 +211,14 @@ async function generate(
 Memória da Luna:
 
 ${memoryText}
+
+Responda somente à mensagem atual do usuário.
+Não repita a mensagem do usuário.
+Não repita palavras ou frases desnecessariamente.
 `
-
         },
-
         ...recentHistory
-
     ];
-
 
     const thinking =
         addMessage(
@@ -437,257 +226,160 @@ ${memoryText}
             "ai"
         );
 
-
     try {
-
         const output =
             await generator(
                 messages,
                 {
-
-                    max_new_tokens:
-                        120,
-
-                    temperature:
-                        0.7,
-
-                    do_sample:
-                        true
-
+                    max_new_tokens: 80,
+                    temperature: 0.4,
+                    do_sample: true,
+                    repetition_penalty: 1.25,
+                    no_repeat_ngram_size: 3
                 }
             );
 
-
         let answer = "";
 
-
-        if (
-            output &&
-            output[0]
-        ) {
-
+        if (output && output[0]) {
             const generated =
-                output[0]
-                    .generated_text;
+                output[0].generated_text;
 
-
-            if (
-                Array.isArray(generated)
-            ) {
-
+            if (Array.isArray(generated)) {
                 const last =
                     generated[
                         generated.length - 1
                     ];
-
 
                 if (
                     last &&
                     typeof last.content ===
                         "string"
                 ) {
-
                     answer =
                         last.content;
-
                 } else if (
                     typeof last ===
                         "string"
                 ) {
-
                     answer =
                         last;
-
                 }
-
             } else if (
                 typeof generated ===
                     "string"
             ) {
-
                 answer =
                     generated;
-
             }
-
         }
 
-
-        answer =
-            answer.trim();
-
+        answer = answer.trim();
 
         if (!answer) {
-
             answer =
                 "Não consegui gerar uma resposta.";
-
         }
 
-
         thinking.remove();
-
 
         addMessage(
             answer,
             "ai"
         );
 
-
         history.push({
-
             role: "assistant",
-
-            content:
-                answer
-
+            content: answer
         });
-
 
         saveHistory();
 
-
     } catch (error) {
-
         console.error(
             "ERRO AO RESPONDER:",
             error
         );
 
-
         thinking.remove();
-
 
         let errorText =
             "Erro desconhecido";
-
 
         if (
             error &&
             error.message
         ) {
-
             errorText =
                 error.message;
-
         }
-
 
         addMessage(
             "ERRO AO RESPONDER:\n\n" +
             errorText,
             "ai"
         );
-
     }
 
-
     generating = false;
-
     sendButton.disabled = false;
-
     input.focus();
-
 }
-
-
-// ============================================================
-// BOTÃO ENVIAR
-// ============================================================
 
 sendButton.addEventListener(
     "click",
     async () => {
-
         const message =
             input.value.trim();
-
 
         if (!message) {
             return;
         }
 
-
         if (!generator) {
-
             addMessage(
                 "A Luna ainda não terminou de carregar.",
                 "ai"
             );
-
             return;
         }
 
-
         input.value = "";
-
 
         addMessage(
             message,
             "user"
         );
 
-
-        await generate(
-            message
-        );
-
+        await generate(message);
     }
 );
-
-
-// ============================================================
-// ENTER
-// ============================================================
 
 input.addEventListener(
     "keydown",
     event => {
-
         if (
             event.key === "Enter" &&
             !event.shiftKey
         ) {
-
             event.preventDefault();
-
             sendButton.click();
-
         }
-
     }
 );
-
-
-// ============================================================
-// LIMPAR
-// ============================================================
 
 clearButton.addEventListener(
     "click",
     () => {
-
         history = [];
-
         saveHistory();
-
         chat.innerHTML = "";
-
     }
 );
 
-
-// ============================================================
-// INICIAR
-// ============================================================
-
 async function start() {
-
     loadHistory();
-
     await loadModel();
-
 }
-
 
 start();
