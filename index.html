@@ -1,36 +1,85 @@
 <!doctype html>
+
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#0d0d0d">
-    <title>Luna AI</title>
-    <link rel="stylesheet" href="style.css?v=16">
-</head>
-<body>
-    <header class="app-header">
-        <div class="brand" aria-live="polite">
-            <strong>Luna AI</strong>
-            <small id="status">Iniciando...</small>
-        </div>
-        <button id="clearButton" type="button">Limpar</button>
-    </header>
+    <meta charset="UTF-8"><meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+>
 
-    <main id="chat" aria-live="polite" aria-label="Conversa com Luna"></main>
+<meta
+    name="theme-color"
+    content="#0d0d0d"
+>
 
-    <section id="inputArea" aria-label="Enviar mensagem">
-        <textarea
-            id="messageInput"
-            rows="1"
-            maxlength="2000"
-            autocomplete="off"
-            spellcheck="true"
-            placeholder="Digite uma mensagem..."
-            aria-label="Mensagem"
-        ></textarea>
-        <button id="sendButton" type="button">Enviar</button>
-    </section>
+<title>Luna AI</title>
 
-    <script type="module" src="app.js?v=16"></script>
+<link
+    rel="stylesheet"
+    href="style.css?v=16"
+>
+
+</head><body><header class="app-header">
+
+    <div
+        class="brand"
+        aria-live="polite"
+    >
+
+        <strong>Luna AI</strong>
+
+        <small id="status">
+            Iniciando...
+        </small>
+
+    </div>
+
+    <button
+        id="clearButton"
+        type="button"
+    >
+        Limpar
+    </button>
+
+</header>
+
+
+<main
+    id="chat"
+    aria-live="polite"
+    aria-label="Conversa com Luna"
+></main>
+
+
+<section
+    id="inputArea"
+    aria-label="Enviar mensagem"
+>
+
+    <textarea
+        id="messageInput"
+        rows="1"
+        maxlength="2000"
+        autocomplete="off"
+        spellcheck="true"
+        placeholder="Digite uma mensagem..."
+        aria-label="Mensagem"
+    ></textarea>
+
+    <button
+        id="sendButton"
+        type="button"
+    >
+        Enviar
+    </button>
+
+</section>
+
+
+<script
+    type="module"
+    src="app.js?v=17"
+></script>
+
 </body>
 </html>
