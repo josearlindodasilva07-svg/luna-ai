@@ -10,21 +10,37 @@ const clearButton = document.getElementById("clearButton");
 const status = document.getElementById("status");
 
 const workerCode = `
-import { pipeline, env } from "${TRANSFORMERS_URL}";
+import {
+    pipeline,
+    AutoTokenizer,
+    env
+} from "${TRANSFORMERS_URL}";
 
 env.allowLocalModels = false;
 env.allowRemoteModels = true;
 env.useBrowserCache = true;
 
 let generator = null;
+let tokenizer = null;
 let loading = false;
+
+const CHAT_TEMPLATE =
+"{% for message in messages %}" +
+"{% if loop.first and messages[0]['role'] != 'system' %}" +
+"{{ '<|im_start|>system\\\\nYou are a helpful AI assistant named SmolLM<|im_end|>\\\\n' }}" +
+"{% endif %}" +
+"{{ '<|im_start|>' + message['role'] + '\\\\n' + message['content'] + '<|im_end|>\\\\n' }}" +
+"{% endfor %}" +
+"{% if add_generation_prompt %}" +
+"{{ '<|im_start|>assistant\\\\n' }}" +
+"{% endif %}";
 
 self.onmessage = async (event) => {
     const data = event.data;
 
     try {
         if (data.type === "load") {
-            if (generator) {
+            if (generator && tokenizer) {
                 self.postMessage({
                     type: "loaded"
                 });
@@ -39,6 +55,12 @@ self.onmessage = async (event) => {
                 type: "status",
                 text: "Carregando modelo..."
             });
+
+            tokenizer = await AutoTokenizer.from_pretrained(
+                "${MODEL}"
+            );
+
+            tokenizer.chat_template = CHAT_TEMPLATE;
 
             generator = await pipeline(
                 "text-generation",
@@ -59,7 +81,7 @@ self.onmessage = async (event) => {
         }
 
         if (data.type === "generate") {
-            if (!generator) {
+            if (!generator || !tokenizer) {
                 throw new Error(
                     "Modelo ainda não foi carregado."
                 );
@@ -84,8 +106,17 @@ self.onmessage = async (event) => {
                 }
             ];
 
+            const prompt =
+                tokenizer.apply_chat_template(
+                    messages,
+                    {
+                        tokenize: false,
+                        add_generation_prompt: true
+                    }
+                );
+
             const result = await generator(
-                messages,
+                prompt,
                 {
                     max_new_tokens: 80,
                     do_sample: true,
@@ -101,33 +132,19 @@ self.onmessage = async (event) => {
                 Array.isArray(result) &&
                 result.length > 0
             ) {
-                const item = result[0];
-
-                if (
-                    item &&
-                    typeof item.generated_text === "string"
-                ) {
-                    text = item.generated_text;
-                } else if (
-                    item &&
-                    Array.isArray(item.generated_text)
-                ) {
-                    const last = item.generated_text[
-                        item.generated_text.length - 1
-                    ];
-
-                    if (
-                        last &&
-                        typeof last.content === "string"
-                    ) {
-                        text = last.content;
-                    }
-                }
+                text =
+                    result[0]?.generated_text || "";
             }
 
             if (typeof text !== "string") {
                 text = String(text);
             }
+
+            if (text.startsWith(prompt)) {
+                text = text.slice(prompt.length);
+            }
+
+            text = text.trim();
 
             self.postMessage({
                 type: "result",
@@ -166,11 +183,10 @@ let generating = false;
 function addMessage(text, type) {
     const div = document.createElement("div");
 
-    div.className = `message ${type}`;
+    div.className = \`message \${type}\`;
     div.textContent = text;
 
     chat.appendChild(div);
-
     chat.scrollTop = chat.scrollHeight;
 
     return div;
@@ -208,10 +224,6 @@ worker.onmessage = (event) => {
         setStatus("Online");
 
         let answer = data.text || "";
-
-        if (Array.isArray(answer)) {
-            answer = answer.join("\n");
-        }
 
         answer = String(answer).trim();
 
@@ -260,7 +272,6 @@ function sendMessage() {
             "O modelo ainda está carregando.",
             "ai"
         );
-
         return;
     }
 
