@@ -1,9 +1,3 @@
-const MODEL =
-    "onnx-community/LFM2.5-350M-ONNX";
-
-const TRANSFORMERS_URL =
-    "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0";
-
 const chat =
     document.getElementById("chat");
 
@@ -20,298 +14,17 @@ const status =
     document.getElementById("status");
 
 
+let modelReady = false;
+let generating = false;
+
+
 /* ============================================================
    WORKER
    ============================================================ */
 
-const workerCode = `
-
-import {
-    pipeline,
-    env
-} from "${TRANSFORMERS_URL}";
-
-
-env.allowLocalModels = false;
-env.allowRemoteModels = true;
-env.useBrowserCache = true;
-
-
-let generator = null;
-let loading = false;
-
-
-self.onmessage = async (event) => {
-
-    const data =
-        event.data;
-
-
-    try {
-
-        /* ====================================================
-           CARREGAR MODELO
-           ==================================================== */
-
-        if (
-            data.type === "load"
-        ) {
-
-            if (generator) {
-
-                self.postMessage({
-                    type: "loaded"
-                });
-
-                return;
-            }
-
-
-            if (loading) {
-                return;
-            }
-
-
-            loading = true;
-
-
-            self.postMessage({
-                type: "status",
-                text: "Carregando Luna..."
-            });
-
-
-            generator =
-                await pipeline(
-                    "text-generation",
-                    "${MODEL}",
-                    {
-                        device: "wasm",
-                        dtype: "q4"
-                    }
-                );
-
-
-            loading = false;
-
-
-            self.postMessage({
-                type: "loaded"
-            });
-
-
-            return;
-        }
-
-
-        /* ====================================================
-           GERAR RESPOSTA
-           ==================================================== */
-
-        if (
-            data.type === "generate"
-        ) {
-
-            if (!generator) {
-
-                throw new Error(
-                    "Modelo ainda não foi carregado."
-                );
-            }
-
-
-            const userText =
-                String(
-                    data.prompt || ""
-                ).trim();
-
-
-            if (!userText) {
-                return;
-            }
-
-
-            const messages = [
-
-                {
-                    role: "system",
-
-                    content:
-                        "Você é Luna, uma assistente de IA. " +
-                        "Responda em português do Brasil. " +
-                        "Seja natural, simples, direta e útil. " +
-                        "Responda somente ao que o usuário perguntar. " +
-                        "Não invente informações."
-                },
-
-                {
-                    role: "user",
-
-                    content:
-                        userText
-                }
-
-            ];
-
-
-            self.postMessage({
-                type: "status",
-                text: "Pensando..."
-            });
-
-
-            const result =
-                await generator(
-                    messages,
-                    {
-                        max_new_tokens: 100,
-
-                        do_sample: true,
-
-                        temperature: 0.1,
-
-                        top_k: 50,
-
-                        repetition_penalty: 1.05
-                    }
-                );
-
-
-            let text = "";
-
-
-            /* =================================================
-               PEGAR TEXTO GERADO
-               ================================================= */
-
-            if (
-                Array.isArray(result) &&
-                result.length > 0
-            ) {
-
-                const generated =
-                    result[0]?.generated_text;
-
-
-                if (
-                    Array.isArray(generated) &&
-                    generated.length > 0
-                ) {
-
-                    const last =
-                        generated[
-                            generated.length - 1
-                        ];
-
-
-                    if (
-                        last &&
-                        typeof last.content ===
-                            "string"
-                    ) {
-
-                        text =
-                            last.content;
-                    }
-
-                } else if (
-                    typeof generated ===
-                        "string"
-                ) {
-
-                    text =
-                        generated;
-                }
-            }
-
-
-            text =
-                String(text).trim();
-
-
-            /* =================================================
-               LIMPAR RESPOSTA
-               ================================================= */
-
-            text =
-                text
-                    .replace(
-                        /^assistant\\s*:/i,
-                        ""
-                    )
-                    .replace(
-                        /^luna\\s*:/i,
-                        ""
-                    )
-                    .replace(
-                        /<\\|im_end\\|>/gi,
-                        ""
-                    )
-                    .replace(
-                        /<\\|endoftext\\|>/gi,
-                        ""
-                    )
-                    .trim();
-
-
-            if (!text) {
-
-                text =
-                    "Não consegui responder.";
-            }
-
-
-            self.postMessage({
-                type: "result",
-                text: text
-            });
-
-        }
-
-    } catch (error) {
-
-        loading = false;
-
-
-        self.postMessage({
-
-            type: "error",
-
-            error:
-                error?.message ||
-                String(error),
-
-            stack:
-                error?.stack ||
-                ""
-
-        });
-
-    }
-
-};
-
-`;
-
-
-/* ============================================================
-   CRIAR WORKER
-   ============================================================ */
-
-const workerBlob =
-    new Blob(
-        [workerCode],
-        {
-            type: "application/javascript"
-        }
-    );
-
-
 const worker =
     new Worker(
-        URL.createObjectURL(
-            workerBlob
-        ),
+        "./worker.js?v=22",
         {
             type: "module"
         }
@@ -319,49 +32,24 @@ const worker =
 
 
 /* ============================================================
-   ESTADO
+   MENSAGENS
    ============================================================ */
 
-let modelReady =
-    false;
-
-let generating =
-    false;
-
-
-/* ============================================================
-   ADICIONAR MENSAGEM
-   ============================================================ */
-
-function addMessage(
-    text,
-    type
-) {
+function addMessage(text, type) {
 
     const div =
-        document.createElement(
-            "div"
-        );
-
+        document.createElement("div");
 
     div.className =
         "message " + type;
 
-
     div.textContent =
         text;
 
-
-    chat.appendChild(
-        div
-    );
-
+    chat.appendChild(div);
 
     chat.scrollTop =
         chat.scrollHeight;
-
-
-    return div;
 }
 
 
@@ -369,9 +57,7 @@ function addMessage(
    STATUS
    ============================================================ */
 
-function setStatus(
-    text
-) {
+function setStatus(text) {
 
     status.textContent =
         text;
@@ -385,73 +71,25 @@ function setStatus(
 worker.onerror =
     (event) => {
 
-        generating =
-            false;
+        modelReady = false;
+        generating = false;
 
-        modelReady =
-            false;
+        sendButton.disabled = false;
+        input.disabled = false;
 
-
-        sendButton.disabled =
-            false;
-
-        input.disabled =
-            false;
-
-
-        setStatus(
-            "Erro no Worker"
-        );
-
+        setStatus("Erro no Worker");
 
         addMessage(
             "ERRO NO WORKER: " +
             (
                 event.message ||
-                "Falha ao carregar o motor da IA."
+                "Não foi possível iniciar o motor da Luna."
             ),
             "ai"
         );
 
-
         console.error(
             "Luna Worker Error:",
-            event
-        );
-    };
-
-
-/* ============================================================
-   ERRO DE MENSAGEM DO WORKER
-   ============================================================ */
-
-worker.onmessageerror =
-    (event) => {
-
-        generating =
-            false;
-
-
-        sendButton.disabled =
-            false;
-
-        input.disabled =
-            false;
-
-
-        setStatus(
-            "Erro de comunicação"
-        );
-
-
-        addMessage(
-            "ERRO DE COMUNICAÇÃO COM O WORKER.",
-            "ai"
-        );
-
-
-        console.error(
-            "Luna Worker Message Error:",
             event
         );
     };
@@ -468,13 +106,8 @@ worker.onmessage =
             event.data;
 
 
-        /* ================================================
-           STATUS
-           ================================================ */
-
         if (
-            data.type ===
-            "status"
+            data.type === "status"
         ) {
 
             setStatus(
@@ -485,107 +118,66 @@ worker.onmessage =
         }
 
 
-        /* ================================================
-           MODELO CARREGADO
-           ================================================ */
-
         if (
-            data.type ===
-            "loaded"
+            data.type === "loaded"
         ) {
 
-            modelReady =
-                true;
-
+            modelReady = true;
+            generating = false;
 
             setStatus(
                 "Online"
             );
 
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
+            sendButton.disabled = false;
+            input.disabled = false;
 
             return;
         }
 
 
-        /* ================================================
-           RESPOSTA
-           ================================================ */
-
         if (
-            data.type ===
-            "result"
+            data.type === "result"
         ) {
 
-            generating =
-                false;
+            generating = false;
 
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
+            sendButton.disabled = false;
+            input.disabled = false;
 
             setStatus(
                 "Online"
             );
 
 
-            let answer =
+            const answer =
                 String(
                     data.text || ""
                 ).trim();
 
 
-            if (!answer) {
-
-                answer =
-                    "Não consegui responder.";
-            }
-
-
             addMessage(
-                answer,
+                answer ||
+                "Não consegui responder.",
                 "ai"
             );
-
 
             return;
         }
 
 
-        /* ================================================
-           ERRO
-           ================================================ */
-
         if (
-            data.type ===
-            "error"
+            data.type === "error"
         ) {
 
-            generating =
-                false;
+            generating = false;
 
-
-            sendButton.disabled =
-                false;
-
-            input.disabled =
-                false;
-
+            sendButton.disabled = false;
+            input.disabled = false;
 
             setStatus(
                 "Erro"
             );
-
 
             addMessage(
                 "ERRO AO RESPONDER: " +
@@ -593,26 +185,18 @@ worker.onmessage =
                 "ai"
             );
 
-
             console.error(
-                "Luna Worker Error:",
+                "Luna:",
                 data.error
             );
 
-
-            console.error(
-                data.stack || ""
-            );
-
-
             return;
         }
-
     };
 
 
 /* ============================================================
-   ENVIAR MENSAGEM
+   ENVIAR
    ============================================================ */
 
 function sendMessage() {
@@ -648,20 +232,12 @@ function sendMessage() {
     );
 
 
-    input.value =
-        "";
+    input.value = "";
 
+    generating = true;
 
-    generating =
-        true;
-
-
-    sendButton.disabled =
-        true;
-
-    input.disabled =
-        true;
-
+    sendButton.disabled = true;
+    input.disabled = true;
 
     setStatus(
         "Pensando..."
@@ -670,11 +246,9 @@ function sendMessage() {
 
     worker.postMessage({
 
-        type:
-            "generate",
+        type: "generate",
 
-        prompt:
-            text
+        prompt: text
 
     });
 }
@@ -707,7 +281,6 @@ input.addEventListener(
 
             sendMessage();
         }
-
     }
 );
 
@@ -720,8 +293,7 @@ clearButton.addEventListener(
     "click",
     () => {
 
-        chat.innerHTML =
-            "";
+        chat.innerHTML = "";
 
     }
 );
@@ -731,12 +303,8 @@ clearButton.addEventListener(
    INÍCIO
    ============================================================ */
 
-sendButton.disabled =
-    true;
-
-input.disabled =
-    true;
-
+sendButton.disabled = true;
+input.disabled = true;
 
 setStatus(
     "Carregando Luna..."
