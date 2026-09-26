@@ -244,20 +244,14 @@ const workerSource = `
                     }
                 };
 
-                if (!self.navigator || !self.navigator.gpu) {
-                    throw new Error(
-                        "WebGPU não está disponível neste Chrome Android. " +
-                        "A Luna foi interrompida para não gerar texto corrompido."
-                    );
-                }
-
                 generator = await pipeline(
                     "text-generation",
                     message.model,
                     {
-                        device: "webgpu",
+                        device: "wasm",
                         /* q4f16 está produzindo tokens inválidos neste runtime.
-                         * q8 usa mais memória, mas preserva os logits do Qwen. */
+                         * q8 usa mais memória, mas preserva os logits do Qwen.
+                         * O Worker impede que esse custo bloqueie a interface. */
                         dtype: "q8",
                         progress_callback
                     }
@@ -265,7 +259,7 @@ const workerSource = `
 
                 self.postMessage({
                     type: "ready",
-                    backend: "WebGPU / Qwen2.5"
+                    backend: "WASM worker q8 / Qwen2.5"
                 });
             } catch (error) {
                 self.postMessage({
