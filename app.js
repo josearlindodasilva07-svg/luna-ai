@@ -24,7 +24,7 @@ let generating = false;
 
 const worker =
     new Worker(
-        "./worker.js?v=22",
+        "./worker.js?v=25",
         {
             type: "module"
         }
@@ -32,10 +32,13 @@ const worker =
 
 
 /* ============================================================
-   MENSAGENS
+   MENSAGEM
    ============================================================ */
 
-function addMessage(text, type) {
+function addMessage(
+    text,
+    type
+) {
 
     const div =
         document.createElement("div");
@@ -57,7 +60,9 @@ function addMessage(text, type) {
    STATUS
    ============================================================ */
 
-function setStatus(text) {
+function setStatus(
+    text
+) {
 
     status.textContent =
         text;
@@ -74,22 +79,24 @@ worker.onerror =
         modelReady = false;
         generating = false;
 
-        sendButton.disabled = false;
-        input.disabled = false;
+        sendButton.disabled = true;
+        input.disabled = true;
 
-        setStatus("Erro no Worker");
+        setStatus(
+            "Erro no Worker"
+        );
 
         addMessage(
-            "ERRO NO WORKER: " +
+            "ERRO NO WORKER:\n" +
             (
                 event.message ||
-                "Não foi possível iniciar o motor da Luna."
+                "Não foi possível iniciar o Worker."
             ),
             "ai"
         );
 
         console.error(
-            "Luna Worker Error:",
+            "Worker error:",
             event
         );
     };
@@ -129,8 +136,11 @@ worker.onmessage =
                 "Online"
             );
 
-            sendButton.disabled = false;
-            input.disabled = false;
+            sendButton.disabled =
+                false;
+
+            input.disabled =
+                false;
 
             return;
         }
@@ -142,22 +152,19 @@ worker.onmessage =
 
             generating = false;
 
-            sendButton.disabled = false;
-            input.disabled = false;
-
             setStatus(
                 "Online"
             );
 
+            sendButton.disabled =
+                false;
 
-            const answer =
-                String(
-                    data.text || ""
-                ).trim();
+            input.disabled =
+                false;
 
 
             addMessage(
-                answer ||
+                data.text ||
                 "Não consegui responder.",
                 "ai"
             );
@@ -170,28 +177,35 @@ worker.onmessage =
             data.type === "error"
         ) {
 
+            modelReady = false;
             generating = false;
 
-            sendButton.disabled = false;
-            input.disabled = false;
+            sendButton.disabled =
+                true;
+
+            input.disabled =
+                true;
 
             setStatus(
                 "Erro"
             );
 
+
             addMessage(
-                "ERRO AO RESPONDER: " +
+                "ERRO AO CARREGAR O MODELO:\n\n" +
                 data.error,
                 "ai"
             );
 
+
             console.error(
-                "Luna:",
+                "Luna error:",
                 data.error
             );
 
             return;
         }
+
     };
 
 
@@ -209,7 +223,7 @@ function sendMessage() {
     if (!modelReady) {
 
         addMessage(
-            "O modelo ainda está carregando.",
+            "A Luna ainda está carregando.",
             "ai"
         );
 
@@ -232,12 +246,20 @@ function sendMessage() {
     );
 
 
-    input.value = "";
+    input.value =
+        "";
 
-    generating = true;
 
-    sendButton.disabled = true;
-    input.disabled = true;
+    generating =
+        true;
+
+
+    sendButton.disabled =
+        true;
+
+    input.disabled =
+        true;
+
 
     setStatus(
         "Pensando..."
@@ -246,9 +268,11 @@ function sendMessage() {
 
     worker.postMessage({
 
-        type: "generate",
+        type:
+            "generate",
 
-        prompt: text
+        prompt:
+            text
 
     });
 }
@@ -293,7 +317,8 @@ clearButton.addEventListener(
     "click",
     () => {
 
-        chat.innerHTML = "";
+        chat.innerHTML =
+            "";
 
     }
 );
@@ -303,11 +328,14 @@ clearButton.addEventListener(
    INÍCIO
    ============================================================ */
 
+modelReady = false;
+generating = false;
+
 sendButton.disabled = true;
 input.disabled = true;
 
 setStatus(
-    "Carregando Luna..."
+    "Iniciando..."
 );
 
 
