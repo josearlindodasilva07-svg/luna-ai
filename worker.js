@@ -28,13 +28,13 @@ try {
 
     self.postMessage({
         type: "status",
-        text: "Carregando modelo FP16..."
+        text: "Carregando LFM2..."
     });
 
     const generator =
         await pipeline(
             "text-generation",
-            "onnx-community/LFM2.5-350M-ONNX",
+            "onnx-community/LFM2-350M-ONNX",
             {
                 device: "wasm",
                 dtype: "fp16"
