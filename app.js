@@ -4,7 +4,6 @@ const MODEL =
 const TRANSFORMERS_URL =
 "https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.0";
 
-
 const chat = document.getElementById("chat");
 const input = document.getElementById("messageInput");
 const sendButton = document.getElementById("sendButton");
@@ -50,7 +49,7 @@ try {
 
         self.postMessage({
             type: "status",
-            text: "Baixando Luna..."
+            text: "Carregando Luna..."
         });
 
 
@@ -101,13 +100,11 @@ try {
             {
                 role: "system",
                 content:
-                    "Você é Luna, uma assistente de inteligência artificial. " +
+                    "Você é Luna, uma assistente de IA. " +
                     "Responda em português do Brasil. " +
                     "Seja natural, simples, direta e útil. " +
                     "Responda somente ao que o usuário perguntar. " +
-                    "Não invente informações. " +
-                    "Não fale sobre seu treinamento. " +
-                    "Não escreva uma apresentação sobre você."
+                    "Não invente informações."
             },
 
             {
@@ -132,11 +129,11 @@ try {
 
                     do_sample: true,
 
-                    temperature: 0.7,
+                    temperature: 0.1,
 
-                    top_p: 0.9,
+                    top_k: 50,
 
-                    repetition_penalty: 1.1
+                    repetition_penalty: 1.05
                 }
             );
 
@@ -228,7 +225,6 @@ try {
 
     loading = false;
 
-
     self.postMessage({
         type: "error",
 
@@ -275,21 +271,16 @@ const div =
         "div"
     );
 
-
 div.className =
     "message " + type;
-
 
 div.textContent =
     text;
 
-
 chat.appendChild(div);
-
 
 chat.scrollTop =
     chat.scrollHeight;
-
 
 return div;
 
@@ -330,19 +321,15 @@ worker.onmessage =
         modelReady =
             true;
 
-
         setStatus(
             "Online"
         );
 
-
         sendButton.disabled =
             false;
 
-
         input.disabled =
             false;
-
 
         return;
     }
@@ -356,14 +343,11 @@ worker.onmessage =
         generating =
             false;
 
-
         sendButton.disabled =
             false;
 
-
         input.disabled =
             false;
-
 
         setStatus(
             "Online"
@@ -388,7 +372,6 @@ worker.onmessage =
             "ai"
         );
 
-
         return;
     }
 
@@ -401,14 +384,11 @@ worker.onmessage =
         generating =
             false;
 
-
         sendButton.disabled =
             false;
 
-
         input.disabled =
             false;
-
 
         setStatus(
             "Erro"
@@ -431,7 +411,6 @@ worker.onmessage =
         console.error(
             data.stack || ""
         );
-
 
         return;
     }
@@ -479,7 +458,6 @@ generating =
 
 sendButton.disabled =
     true;
-
 
 input.disabled =
     true;
