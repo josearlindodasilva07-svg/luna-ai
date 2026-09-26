@@ -7,18 +7,19 @@ const MODEL =
     "onnx-community/Qwen2.5-0.5B-Instruct";
 
 /*
- * Configuração para Chrome Android.
+ * Configuração conservadora para Chrome Android.
  *
- * Uma thread reduz o pico de RAM e CPU.
- * O modelo é carregado somente uma vez.
+ * Uma thread evita a multiplicação de buffers e o pico de RAM
+ * que pode ocorrer com WASM multithread em aparelhos móveis.
+ * O modelo é carregado somente uma vez e permanece em memória.
  */
 env.backends.onnx.wasm.numThreads = 1;
-env.backends.onnx.wasm.proxy = false;
-
-
-/* =========================================================
-   PERSONALIDADE DA LUNA
-   ========================================================= */
+/*
+ * Nunca execute a inferência pesada na thread principal do navegador.
+ * Com false, o Chrome Android pode parecer travado durante a segunda
+ * geração, mesmo que o modelo ainda esteja funcionando.
+ */
+env.backends.onnx.wasm.proxy = true;
 
 const PERSONALITY = `
 Você é Luna, uma inteligência artificial.
@@ -34,10 +35,8 @@ Sua personalidade:
 - paciente
 
 Regras importantes:
-
 - Responda sempre em português brasileiro.
-- Use palavras normais.
-- Use frases naturais e fáceis de entender.
+- Use palavras normais e frases naturais.
 - Se a pergunta for simples, responda de forma simples.
 - Não repita palavras ou frases sem necessidade.
 - Não escreva palavras inventadas.
@@ -49,86 +48,26 @@ Regras importantes:
 - Você não é uma pessoa humana.
 `;
 
-
-/* =========================================================
-   LIMITES PARA CELULAR
-   ========================================================= */
-
-/*
- * Antes:
- *
- * q8
- * 64 tokens
- * 6000 caracteres
- *
- * Agora:
- *
- * q4
- * 32 tokens
- * 2500 caracteres
- *
- * Isso reduz bastante o trabalho durante cada resposta.
- */
-
+/* Limites deliberados para o hardware móvel. */
 const MAX_GENERATED_TOKENS = 32;
-
-const MAX_CONTEXT_CHARS = 2500;
-
-const MAX_MEMORY_CHARS = 800;
-
-const MAX_SAVED_HISTORY_ITEMS = 100;
-
-
-/* =========================================================
-   ESTADO
-   ========================================================= */
+const MAX_CONTEXT_CHARS = 3000;
+const MAX_MEMORY_CHARS = 600;
+const MAX_SAVED_HISTORY_ITEMS = 200;
 
 let generator = null;
-
 let modelLoading = false;
-
 let generating = false;
 
+const chat = document.getElementById("chat");
+const input = document.getElementById("messageInput");
+const sendButton = document.getElementById("sendButton");
+const clearButton = document.getElementById("clearButton");
+const status = document.getElementById("status");
 
-/* =========================================================
-   ELEMENTOS DA INTERFACE
-   ========================================================= */
+let memory = readJson("luna_memory", {});
+let history = readJson("luna_history", []);
 
-const chat =
-    document.getElementById("chat");
-
-const input =
-    document.getElementById("messageInput");
-
-const sendButton =
-    document.getElementById("sendButton");
-
-const clearButton =
-    document.getElementById("clearButton");
-
-const status =
-    document.getElementById("status");
-
-
-/* =========================================================
-   MEMÓRIA E HISTÓRICO
-   ========================================================= */
-
-let memory = readJson(
-    "luna_memory",
-    {}
-);
-
-let history = readJson(
-    "luna_history",
-    []
-);
-
-if (
-    !memory ||
-    typeof memory !== "object" ||
-    Array.isArray(memory)
-) {
+if (!memory || typeof memory !== "object" || Array.isArray(memory)) {
     memory = {};
 }
 
@@ -136,193 +75,91 @@ if (!Array.isArray(history)) {
     history = [];
 }
 
-
-/* =========================================================
-   LEITURA SEGURA DO LOCALSTORAGE
-   ========================================================= */
-
 function readJson(key, fallback) {
     try {
-        const value =
-            JSON.parse(
-                localStorage.getItem(key) ||
-                JSON.stringify(fallback)
-            );
-
-        return value;
-
-    } catch (error) {
-
-        console.warn(
-            `Dados locais inválidos em ${key}.`,
-            error
+        const value = JSON.parse(
+            localStorage.getItem(key) || JSON.stringify(fallback)
         );
 
+        return value;
+    } catch (error) {
+        console.warn(`Dados locais inválidos em ${key}.`, error);
         return fallback;
     }
 }
-
-
-/* =========================================================
-   STATUS
-   ========================================================= */
 
 function setStatus(text) {
     status.textContent = text;
 }
 
-
-/* =========================================================
-   SALVAR MEMÓRIA
-   ========================================================= */
-
 function saveMemory() {
     try {
-
         localStorage.setItem(
             "luna_memory",
             JSON.stringify(memory)
         );
-
     } catch (error) {
-
-        console.warn(
-            "Não foi possível salvar a memória local.",
-            error
-        );
+        console.warn("Não foi possível salvar a memória local.", error);
     }
 }
 
-
-/* =========================================================
-   SALVAR HISTÓRICO
-   ========================================================= */
-
 function saveHistory() {
-
     /*
-     * Mantém somente os últimos itens
-     * para evitar crescimento infinito.
+     * O histórico completo continua local, mas é limitado para evitar
+     * que localStorage cresça indefinidamente e cause serializações
+     * grandes a cada envio.
      */
-
-    if (
-        history.length >
-        MAX_SAVED_HISTORY_ITEMS
-    ) {
-
-        history =
-            history.slice(
-                -MAX_SAVED_HISTORY_ITEMS
-            );
+    if (history.length > MAX_SAVED_HISTORY_ITEMS) {
+        history = history.slice(-MAX_SAVED_HISTORY_ITEMS);
     }
 
     try {
-
         localStorage.setItem(
             "luna_history",
             JSON.stringify(history)
         );
-
     } catch (error) {
-
-        console.warn(
-            "Não foi possível salvar o histórico local.",
-            error
-        );
+        console.warn("Não foi possível salvar o histórico local.", error);
     }
 }
 
+function addMessage(text, type) {
+    const element = document.createElement("div");
 
-/* =========================================================
-   ADICIONAR MENSAGEM NA TELA
-   ========================================================= */
+    element.className = `message ${type}`;
+    element.textContent = String(text || "");
 
-function addMessage(
-    text,
-    type
-) {
-
-    const element =
-        document.createElement("div");
-
-    element.className =
-        `message ${type}`;
-
-    element.textContent =
-        String(text || "");
-
-    chat.appendChild(
-        element
-    );
-
-    chat.scrollTop =
-        chat.scrollHeight;
+    chat.appendChild(element);
+    chat.scrollTop = chat.scrollHeight;
 
     return element;
 }
 
-
-/* =========================================================
-   CARREGAR HISTÓRICO
-   ========================================================= */
-
 function loadHistory() {
-
-    for (
-        const message of history
-    ) {
-
-        if (
-            !message ||
-            typeof message.content !==
-                "string"
-        ) {
+    for (const message of history) {
+        if (!message || typeof message.content !== "string") {
             continue;
         }
 
         addMessage(
             message.content,
-            message.role === "user"
-                ? "user"
-                : "ai"
+            message.role === "user" ? "user" : "ai"
         );
     }
 }
 
-
-/* =========================================================
-   PROGRESSO DO DOWNLOAD
-   ========================================================= */
-
-function progressCallback(
-    progress
-) {
-
+function progressCallback(progress) {
     if (!progress) {
         return;
     }
 
-    if (
-        progress.status ===
-        "initiate"
-    ) {
-
-        setStatus(
-            "Iniciando download..."
-        );
-
+    if (progress.status === "initiate") {
+        setStatus("Iniciando download...");
         return;
     }
 
-    if (
-        progress.status ===
-        "progress"
-    ) {
-
-        const value =
-            Number(
-                progress.progress
-            );
+    if (progress.status === "progress") {
+        const value = Number(progress.progress);
 
         setStatus(
             Number.isFinite(value)
@@ -333,228 +170,111 @@ function progressCallback(
         return;
     }
 
-    if (
-        progress.status ===
-        "done"
-    ) {
-
-        setStatus(
-            "Finalizando..."
-        );
+    if (progress.status === "done") {
+        setStatus("Finalizando...");
     }
 }
 
-
-/* =========================================================
-   CARREGAR MODELO
-   ========================================================= */
-
 async function loadModel() {
-
-    if (
-        generator ||
-        modelLoading
-    ) {
+    if (generator || modelLoading) {
         return;
     }
 
     modelLoading = true;
-
-    setStatus(
-        "Preparando IA..."
-    );
+    setStatus("Preparando IA...");
 
     try {
+        setStatus("Iniciando Luna pela CPU...");
 
-        setStatus(
-            "Iniciando Luna pela CPU..."
+        generator = await pipeline(
+            "text-generation",
+            MODEL,
+            {
+                device: "wasm",
+                dtype: "q8",
+                progress_callback: progressCallback
+            }
         );
 
-        generator =
-            await pipeline(
-                "text-generation",
-                MODEL,
-                {
-                    device: "wasm",
-
-                    /*
-                     * Q4 usa menos memória
-                     * que Q8.
-                     */
-                    dtype: "q4",
-
-                    progress_callback:
-                        progressCallback
-                }
-            );
-
-        setStatus(
-            "Online - CPU WASM q4"
-        );
-
-        addMessage(
-            "Luna está online.",
-            "ai"
-        );
-
+        setStatus("Online - CPU WASM worker");
+        addMessage("Luna está online.", "ai");
     } catch (error) {
-
-        console.error(
-            "ERRO COMPLETO AO CARREGAR O MODELO:",
-            error
-        );
+        console.error("ERRO COMPLETO AO CARREGAR O MODELO:", error);
 
         generator = null;
-
-        setStatus(
-            "Erro ao carregar IA"
-        );
+        setStatus("Erro ao carregar IA");
 
         addMessage(
             `ERRO REAL:\n\n${getErrorText(error)}`,
             "ai"
         );
-
     } finally {
-
         modelLoading = false;
     }
 }
 
-
-/* =========================================================
-   TEXTO DO ERRO
-   ========================================================= */
-
-function getErrorText(
-    error
-) {
-
-    if (
-        error &&
-        error.message
-    ) {
-
+function getErrorText(error) {
+    if (error && error.message) {
         return error.message;
     }
 
-    return String(
-        error ||
-        "Erro desconhecido"
-    );
+    return String(error || "Erro desconhecido");
 }
 
-
-/* =========================================================
-   MEMÓRIA
-   ========================================================= */
-
 function getMemoryText() {
-
     let text;
 
     try {
-
-        text =
-            JSON.stringify(
-                memory
-            );
-
+        text = JSON.stringify(memory);
     } catch (error) {
-
         text = "{}";
     }
 
-    if (
-        !text ||
-        text === "{}"
-    ) {
-
+    if (!text || text === "{}") {
         return "Nenhuma memória salva.";
     }
 
-    return text.slice(
-        0,
-        MAX_MEMORY_CHARS
-    );
+    return text.slice(0, MAX_MEMORY_CHARS);
 }
 
-
-/* =========================================================
-   VALIDAR MENSAGENS
-   ========================================================= */
-
-function isValidChatMessage(
-    message
-) {
-
+function isValidChatMessage(message) {
     return Boolean(
         message &&
-        (
-            message.role === "user" ||
-            message.role === "assistant"
-        ) &&
-        typeof message.content ===
-            "string" &&
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.content === "string" &&
         message.content.trim()
     );
 }
 
-
-/* =========================================================
-   HISTÓRICO ENVIADO AO MODELO
-   ========================================================= */
-
 function getPromptHistory() {
-
+    /*
+     * O histórico local não é apagado. Apenas uma janela curta é enviada
+     * ao modelo para impedir que o prompt e o KV cache cresçam a cada turno.
+     * O limite é por caracteres, uma aproximação segura para tokens.
+     */
     const selected = [];
-
     let usedChars = 0;
 
-    /*
-     * Começa pelas mensagens mais recentes.
-     */
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+        const message = history[index];
 
-    for (
-        let index =
-            history.length - 1;
-
-        index >= 0;
-
-        index -= 1
-    ) {
-
-        const message =
-            history[index];
-
-        if (
-            !isValidChatMessage(
-                message
-            )
-        ) {
+        if (!isValidChatMessage(message)) {
             continue;
         }
 
-        const content =
-            message.content.trim();
-
-        const cost =
-            content.length + 40;
+        const content = message.content.trim();
+        const cost = content.length + 40;
 
         if (
             selected.length > 0 &&
-            usedChars + cost >
-                MAX_CONTEXT_CHARS
+            usedChars + cost > MAX_CONTEXT_CHARS
         ) {
             break;
         }
 
         selected.push({
-            role:
-                message.role,
-
-            content:
-                content
+            role: message.role,
+            content: content
         });
 
         usedChars += cost;
@@ -563,80 +283,35 @@ function getPromptHistory() {
     return selected.reverse();
 }
 
-
-/* =========================================================
-   MONTAR MENSAGENS
-   ========================================================= */
-
 function buildMessages() {
-
     return [
-
         {
             role: "system",
-
             content:
-                `${PERSONALITY}
-
-Memória da Luna:
-
-${getMemoryText()}
-
-Responda apenas à última mensagem do usuário.`
+                `${PERSONALITY}\n\n` +
+                `Memória da Luna:\n${getMemoryText()}\n\n` +
+                "Responda apenas à última mensagem do usuário."
         },
-
         ...getPromptHistory()
     ];
 }
 
-
-/* =========================================================
-   EXTRAIR RESPOSTA
-   ========================================================= */
-
-function extractAnswer(
-    output
-) {
-
-    if (
-        !output ||
-        !Array.isArray(output) ||
-        !output[0]
-    ) {
-
+function extractAnswer(output) {
+    if (!output || !Array.isArray(output) || !output[0]) {
         return "";
     }
 
-    const generated =
-        output[0]
-            .generated_text;
+    const generated = output[0].generated_text;
 
-    if (
-        Array.isArray(
-            generated
-        )
-    ) {
-
-        for (
-            let index =
-                generated.length - 1;
-
-            index >= 0;
-
-            index -= 1
-        ) {
-
-            const message =
-                generated[index];
+    if (Array.isArray(generated)) {
+        for (let index = generated.length - 1; index >= 0; index -= 1) {
+            const message = generated[index];
 
             if (
                 message &&
-                message.role ===
-                    "assistant" &&
-                typeof message.content ===
-                    "string"
+                message.role === "assistant" &&
+                typeof message.content === "string"
             ) {
-
                 return message.content.trim();
             }
         }
@@ -644,349 +319,145 @@ function extractAnswer(
         return "";
     }
 
-    if (
-        typeof generated ===
-            "string"
-    ) {
-
-        return generated.trim();
-    }
-
-    return "";
+    return typeof generated === "string"
+        ? generated.trim()
+        : "";
 }
 
-
-/* =========================================================
-   LIMPAR RESPOSTA
-   ========================================================= */
-
-function cleanAnswer(
-    text
-) {
-
+function cleanAnswer(text) {
     if (!text) {
         return "";
     }
 
     return String(text)
-
-        .replace(
-            /^assistant\s*:\s*/i,
-            ""
-        )
-
-        .replace(
-            /^luna\s*:\s*/i,
-            ""
-        )
-
-        .replace(
-            /<\|im_end\|>[\s\S]*$/g,
-            ""
-        )
-
-        .replace(
-            /<\|endoftext\|>[\s\S]*$/g,
-            ""
-        )
-
+        .replace(/^assistant\s*:\s*/i, "")
+        .replace(/^luna\s*:\s*/i, "")
+        .replace(/<\|im_end\|>[\s\S]*$/g, "")
+        .replace(/<\|endoftext\|>[\s\S]*$/g, "")
         .trim();
 }
 
-
-/* =========================================================
-   GERAR RESPOSTA
-   ========================================================= */
-
-async function generate(
-    userMessage
-) {
-
-    /*
-     * Impede duas gerações
-     * ao mesmo tempo.
-     */
-
-    if (
-        !generator ||
-        generating ||
-        modelLoading
-    ) {
-
+async function generate(userMessage) {
+    /* Guarda contra cliques rápidos e chamadas simultâneas. */
+    if (!generator || generating || modelLoading) {
         return;
     }
 
     generating = true;
-
-    sendButton.disabled =
-        true;
-
-    input.disabled =
-        true;
-
-
-    /* -----------------------------------------
-       SALVAR MENSAGEM DO USUÁRIO
-       ----------------------------------------- */
+    sendButton.disabled = true;
+    input.disabled = true;
 
     history.push({
-
-        role:
-            "user",
-
-        content:
-            userMessage
+        role: "user",
+        content: userMessage
     });
 
     saveHistory();
 
-
-    /* -----------------------------------------
-       MENSAGEM TEMPORÁRIA
-       ----------------------------------------- */
-
-    const thinking =
-        addMessage(
-            "Pensando...",
-            "ai"
-        );
-
+    const thinking = addMessage("Pensando...", "ai");
     let output = null;
 
-
     try {
-
         /*
-         * O modelo continua carregado.
-         * Não é carregado novamente
-         * a cada mensagem.
+         * O modelo é reutilizado. Ele não é carregado novamente aqui.
+         * O chat template oficial do Qwen é aplicado pelo tokenizer.
          */
-
-        output =
-            await generator(
-                buildMessages(),
-                {
-
-                    /*
-                     * Menos tokens =
-                     * menos processamento.
-                     */
-                    max_new_tokens:
-                        MAX_GENERATED_TOKENS,
-
-                    /*
-                     * Desativa amostragem
-                     * para reduzir variação
-                     * e processamento.
-                     */
-                    do_sample:
-                        false,
-
-                    /*
-                     * Não devolve novamente
-                     * todo o texto de entrada.
-                     */
-                    return_full_text:
-                        false,
-
-                    /*
-                     * Tokens de parada.
-                     */
-                    eos_token_id:
-                        [
-                            151645,
-                            151643
-                        ],
-
-                    pad_token_id:
-                        151643
-                }
-            );
-
-
-        /* -------------------------------------
-           PEGAR RESPOSTA
-           ------------------------------------- */
-
-        const answer =
-            cleanAnswer(
-                extractAnswer(
-                    output
-                )
-            ) ||
-            "Não consegui gerar uma resposta.";
-
-
-        /* -------------------------------------
-           MOSTRAR RESPOSTA
-           ------------------------------------- */
-
-        thinking.remove();
-
-        addMessage(
-            answer,
-            "ai"
+        output = await generator(
+            buildMessages(),
+            {
+                max_new_tokens: MAX_GENERATED_TOKENS,
+                do_sample: false,
+                return_full_text: false,
+                use_cache: false,
+                eos_token_id: [151645, 151643],
+                pad_token_id: 151643
+            }
         );
 
+        const answer = cleanAnswer(extractAnswer(output)) ||
+            "Não consegui gerar uma resposta.";
 
-        /* -------------------------------------
-           SALVAR RESPOSTA
-           ------------------------------------- */
+        thinking.remove();
+        addMessage(answer, "ai");
 
         history.push({
-
-            role:
-                "assistant",
-
-            content:
-                answer
+            role: "assistant",
+            content: answer
         });
 
         saveHistory();
-
-
     } catch (error) {
-
-        console.error(
-            "ERRO AO RESPONDER:",
-            error
-        );
+        console.error("ERRO AO RESPONDER:", error);
 
         thinking.remove();
-
         addMessage(
             `ERRO AO RESPONDER:\n\n${getErrorText(error)}`,
             "ai"
         );
-
     } finally {
-
         /*
-         * Libera a referência ao resultado
-         * da geração.
-         *
-         * NÃO usamos dispose() no modelo,
-         * porque isso faria o modelo precisar
-         * ser carregado novamente.
+         * Não chamar dispose() aqui: isso destruiria os pesos do modelo
+         * e obrigaria um novo carregamento. Apenas removemos a referência
+         * ao resultado temporário para facilitar a coleta de lixo.
          */
-
         output = null;
-
-        generating =
-            false;
-
-        sendButton.disabled =
-            false;
-
-        input.disabled =
-            false;
-
+        generating = false;
+        sendButton.disabled = false;
+        input.disabled = false;
         input.focus();
     }
 }
 
+sendButton.addEventListener("click", async () => {
+    const message = input.value.trim();
 
-/* =========================================================
-   BOTÃO ENVIAR
-   ========================================================= */
+    if (!message || generating || modelLoading) {
+        return;
+    }
 
-sendButton.addEventListener(
-    "click",
-    async () => {
-
-        const message =
-            input.value.trim();
-
-        if (
-            !message ||
-            generating ||
-            modelLoading
-        ) {
-
-            return;
-        }
-
-        if (!generator) {
-
-            addMessage(
-                "A Luna ainda não terminou de carregar.",
-                "ai"
-            );
-
-            return;
-        }
-
-        input.value = "";
-
+    if (!generator) {
         addMessage(
-            message,
-            "user"
+            "A Luna ainda não terminou de carregar.",
+            "ai"
         );
-
-        await generate(
-            message
-        );
+        return;
     }
-);
 
+    input.value = "";
+    addMessage(message, "user");
 
-/* =========================================================
-   ENTER PARA ENVIAR
-   ========================================================= */
+    await generate(message);
+});
 
-input.addEventListener(
-    "keydown",
-    event => {
-
-        if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !generating
-        ) {
-
-            event.preventDefault();
-
-            sendButton.click();
-        }
+input.addEventListener("keydown", event => {
+    if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !generating
+    ) {
+        event.preventDefault();
+        sendButton.click();
     }
-);
+});
 
-
-/* =========================================================
-   LIMPAR CONVERSA
-   ========================================================= */
-
-clearButton.addEventListener(
-    "click",
-    () => {
-
-        if (generating) {
-            return;
-        }
-
-        history = [];
-
-        saveHistory();
-
-        chat.innerHTML = "";
-
-        setStatus(
-            generator
-                ? "Online - CPU WASM q4"
-                : "Modelo não carregado"
-        );
+clearButton.addEventListener("click", () => {
+    if (generating) {
+        return;
     }
-);
 
+    history = [];
+    saveHistory();
+    chat.innerHTML = "";
 
-/* =========================================================
-   INICIAR LUNA
-   ========================================================= */
+    setStatus(
+        generator
+            ? "Online - CPU WASM worker"
+            : "Modelo não carregado"
+    );
+});
 
 async function start() {
-
     loadHistory();
-
     await loadModel();
 }
 
