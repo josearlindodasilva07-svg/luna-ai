@@ -170,6 +170,22 @@ function makeMessages() {
     ];
 }
 
+function makePrompt() {
+    const messages = makeMessages();
+    let prompt = "";
+
+    for (const message of messages) {
+        prompt +=
+            `<|im_start|>${message.role}\n` +
+            `${message.content}<|im_end|>\n`;
+    }
+
+    /* O modelo precisa terminar exatamente no início da resposta. */
+    prompt += "<|im_start|>assistant\n";
+
+    return prompt;
+}
+
 function cleanAnswer(text) {
     let answer = String(text || "")
         .replace(/^assistant\s*:\s*/i, "")
@@ -311,7 +327,7 @@ const workerSource = `
 
         try {
             const output = await generator(
-                message.messages,
+                message.prompt,
                 {
                     max_new_tokens: message.maxNewTokens,
                     do_sample: false,
@@ -443,7 +459,7 @@ function handleWorkerError(event) {
         setStatus("Worker de IA indisponível");
 }
 
-function requestGeneration(messages) {
+function requestGeneration(prompt) {
     return new Promise((resolve, reject) => {
         const id = ++requestId;
 
@@ -452,7 +468,7 @@ function requestGeneration(messages) {
         worker.postMessage({
             type: "generate",
             id,
-            messages,
+            prompt,
             maxNewTokens: MAX_NEW_TOKENS
         });
     });
@@ -472,7 +488,7 @@ async function generate(userMessage) {
     saveHistory();
 
     const thinking = addMessage("Pensando...", "ai");
-    const messages = makeMessages();
+    const prompt = makePrompt();
 
     try {
         const immediateAnswer = localReply(userMessage);
@@ -489,7 +505,7 @@ async function generate(userMessage) {
             return;
         }
 
-        const output = await requestGeneration(messages);
+        const output = await requestGeneration(prompt);
         const answer = cleanAnswer(extractAnswer(output)) ||
             "Não consegui gerar uma resposta.";
 
