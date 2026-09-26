@@ -1,88 +1,104 @@
 <!doctype html>
+<html lang="pt-BR">
 
-<html lang="pt-BR"><head><meta charset="UTF-8">
+<head>
+    <meta charset="UTF-8">
 
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover"
->
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover"
+    >
 
-<meta
-    name="theme-color"
-    content="#0d0d0d"
->
+    <meta
+        name="theme-color"
+        content="#0d0d0d"
+    >
 
-<title>Luna AI</title>
+    <title>Luna AI</title>
 
-<link
-    rel="stylesheet"
-    href="style.css?v=16"
->
+    <link
+        rel="stylesheet"
+        href="style.css?v=20"
+    >
+</head>
 
-</head><body><header class="app-header">
+<body>
 
-    <div
-        class="brand"
+    <header class="app-header">
+
+        <div
+            class="brand"
+            aria-live="polite"
+        >
+
+            <strong>
+                Luna AI
+            </strong>
+
+            <small id="status">
+                Iniciando...
+            </small>
+
+        </div>
+
+        <button
+            id="clearButton"
+            type="button"
+        >
+            Limpar
+        </button>
+
+    </header>
+
+
+    <main
+        id="chat"
         aria-live="polite"
+        aria-label="Conversa com Luna"
+    ></main>
+
+
+    <section
+        id="inputArea"
+        aria-label="Enviar mensagem"
     >
 
-        <strong>
-            Luna AI
-        </strong>
+        <textarea
+            id="messageInput"
+            rows="1"
+            maxlength="2000"
+            autocomplete="off"
+            spellcheck="true"
+            placeholder="Digite uma mensagem..."
+            aria-label="Mensagem"
+        ></textarea>
 
-        <small id="status">
-            Iniciando...
-        </small>
+        <button
+            id="sendButton"
+            type="button"
+        >
+            Enviar
+        </button>
 
-    </div>
-
-
-    <button
-        id="clearButton"
-        type="button"
-    >
-        Limpar
-    </button>
-
-</header>
-
-
-<main
-    id="chat"
-    aria-live="polite"
-    aria-label="Conversa com Luna"
-></main>
+    </section>
 
 
-<section
-    id="inputArea"
-    aria-label="Enviar mensagem"
->
+    <!-- TESTE: confirma que o HTML e o JavaScript estão sendo carregados -->
 
-    <textarea
-        id="messageInput"
-        rows="1"
-        maxlength="2000"
-        autocomplete="off"
-        spellcheck="true"
-        placeholder="Digite uma mensagem..."
-        aria-label="Mensagem"
-    ></textarea>
+    <script>
+        const statusTeste =
+            document.getElementById("status");
+
+        statusTeste.textContent =
+            "JS funcionando";
+    </script>
 
 
-    <button
-        id="sendButton"
-        type="button"
-    >
-        Enviar
-    </button>
+    <script
+        type="module"
+        src="app.js?v=20"
+    ></script>
 
-</section>
+</body>
 
-
-<script
-    type="module"
-    src="app.js?v=19"
-></script>
-
-</body></html>
+</html>
