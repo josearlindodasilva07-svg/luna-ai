@@ -1,4 +1,5 @@
-const MODEL = "onnx-community/SmolLM2-135M-ONNX";
+const MODEL = "onnx-community/SmolLM2-135M-Instruct-ONNX-MHA";
+
 const TRANSFORMERS_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1";
 
@@ -59,23 +60,69 @@ self.onmessage = async (event) => {
 
         if (data.type === "generate") {
             if (!generator) {
-                throw new Error("Modelo ainda não foi carregado.");
+                throw new Error(
+                    "Modelo ainda não foi carregado."
+                );
             }
 
-            const prompt = String(data.prompt || "");
+            const userText = String(
+                data.prompt || ""
+            );
 
-            const result = await generator(prompt, {
-                max_new_tokens: 80,
-                do_sample: true,
-                temperature: 0.7,
-                top_p: 0.9,
-                repetition_penalty: 1.05
-            });
+            const messages = [
+                {
+                    role: "system",
+                    content:
+                        "Você é Luna, uma assistente de IA. " +
+                        "Responda em português do Brasil. " +
+                        "Seja natural, direta e útil. " +
+                        "Não invente informações."
+                },
+                {
+                    role: "user",
+                    content: userText
+                }
+            ];
+
+            const result = await generator(
+                messages,
+                {
+                    max_new_tokens: 80,
+                    do_sample: true,
+                    temperature: 0.7,
+                    top_p: 0.9,
+                    repetition_penalty: 1.05
+                }
+            );
 
             let text = "";
 
-            if (Array.isArray(result) && result.length > 0) {
-                text = result[0]?.generated_text ?? "";
+            if (
+                Array.isArray(result) &&
+                result.length > 0
+            ) {
+                const item = result[0];
+
+                if (
+                    item &&
+                    typeof item.generated_text === "string"
+                ) {
+                    text = item.generated_text;
+                } else if (
+                    item &&
+                    Array.isArray(item.generated_text)
+                ) {
+                    const last = item.generated_text[
+                        item.generated_text.length - 1
+                    ];
+
+                    if (
+                        last &&
+                        typeof last.content === "string"
+                    ) {
+                        text = last.content;
+                    }
+                }
             }
 
             if (typeof text !== "string") {
@@ -99,13 +146,18 @@ self.onmessage = async (event) => {
 };
 `;
 
-const workerBlob = new Blob([workerCode], {
-    type: "application/javascript"
-});
+const workerBlob = new Blob(
+    [workerCode],
+    {
+        type: "application/javascript"
+    }
+);
 
 const worker = new Worker(
     URL.createObjectURL(workerBlob),
-    { type: "module" }
+    {
+        type: "module"
+    }
 );
 
 let modelReady = false;
@@ -118,6 +170,7 @@ function addMessage(text, type) {
     div.textContent = text;
 
     chat.appendChild(div);
+
     chat.scrollTop = chat.scrollHeight;
 
     return div;
@@ -125,22 +178,6 @@ function addMessage(text, type) {
 
 function setStatus(text) {
     status.textContent = text;
-}
-
-function buildPrompt(userText) {
-    return `
-You are Luna, a helpful AI assistant.
-
-Rules:
-- Answer in Brazilian Portuguese.
-- Be natural and direct.
-- Do not invent information.
-- Keep answers reasonably short.
-- You are talking directly with the user.
-
-User: ${userText}
-Luna:
-`;
 }
 
 worker.onmessage = (event) => {
@@ -153,6 +190,7 @@ worker.onmessage = (event) => {
 
     if (data.type === "loaded") {
         modelReady = true;
+
         setStatus("Online");
 
         sendButton.disabled = false;
@@ -171,16 +209,15 @@ worker.onmessage = (event) => {
 
         let answer = data.text || "";
 
-        const marker = "Luna:";
-
-        if (answer.includes(marker)) {
-            answer = answer.split(marker).pop();
+        if (Array.isArray(answer)) {
+            answer = answer.join("\n");
         }
 
-        answer = answer.trim();
+        answer = String(answer).trim();
 
         if (!answer) {
-            answer = "Não consegui gerar uma resposta.";
+            answer =
+                "Não consegui gerar uma resposta.";
         }
 
         addMessage(answer, "ai");
@@ -197,12 +234,19 @@ worker.onmessage = (event) => {
         setStatus("Erro");
 
         addMessage(
-            "ERRO AO RESPONDER: " + data.error,
+            "ERRO AO RESPONDER: " +
+            data.error,
             "ai"
         );
 
-        console.error("Luna Worker Error:", data.error);
-        console.error(data.stack || "");
+        console.error(
+            "Luna Worker Error:",
+            data.error
+        );
+
+        console.error(
+            data.stack || ""
+        );
 
         return;
     }
@@ -216,6 +260,7 @@ function sendMessage() {
             "O modelo ainda está carregando.",
             "ai"
         );
+
         return;
     }
 
@@ -223,7 +268,10 @@ function sendMessage() {
 
     if (!text) return;
 
-    addMessage(text, "user");
+    addMessage(
+        text,
+        "user"
+    );
 
     input.value = "";
 
@@ -234,31 +282,43 @@ function sendMessage() {
 
     setStatus("Pensando...");
 
-    const prompt = buildPrompt(text);
-
     worker.postMessage({
         type: "generate",
-        prompt
+        prompt: text
     });
 }
 
-sendButton.addEventListener("click", sendMessage);
+sendButton.addEventListener(
+    "click",
+    sendMessage
+);
 
-input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-        event.preventDefault();
-        sendMessage();
+input.addEventListener(
+    "keydown",
+    (event) => {
+        if (
+            event.key === "Enter" &&
+            !event.shiftKey
+        ) {
+            event.preventDefault();
+            sendMessage();
+        }
     }
-});
+);
 
-clearButton.addEventListener("click", () => {
-    chat.innerHTML = "";
-});
+clearButton.addEventListener(
+    "click",
+    () => {
+        chat.innerHTML = "";
+    }
+);
 
 sendButton.disabled = true;
 input.disabled = true;
 
-setStatus("Carregando modelo...");
+setStatus(
+    "Carregando modelo..."
+);
 
 worker.postMessage({
     type: "load"
