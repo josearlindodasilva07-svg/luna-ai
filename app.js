@@ -343,7 +343,7 @@ const workerSource = `
 
                     return_full_text: false,
 
-                    use_cache: true
+                    use_cache: false
                 }
             );
 
