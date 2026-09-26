@@ -17,9 +17,15 @@ let generator = null;
 let loading = false;
 
 
-/* ============================================================
-   MENSAGENS
-   ============================================================ */
+function status(text) {
+
+    self.postMessage({
+        type: "status",
+        text: text
+    });
+
+}
+
 
 self.onmessage =
     async (event) => {
@@ -31,7 +37,7 @@ self.onmessage =
         try {
 
             /* ==================================================
-               CARREGAR MODELO
+               CARREGAMENTO
                ================================================== */
 
             if (
@@ -56,10 +62,14 @@ self.onmessage =
                 loading = true;
 
 
-                self.postMessage({
-                    type: "status",
-                    text: "Baixando modelo..."
-                });
+                status(
+                    "Iniciando download..."
+                );
+
+
+                status(
+                    "Conectando ao modelo..."
+                );
 
 
                 generator =
@@ -68,12 +78,81 @@ self.onmessage =
                         MODEL,
                         {
                             device: "wasm",
-                            dtype: "q4"
+                            dtype: "q4",
+
+                            progress_callback:
+                                (progress) => {
+
+                                    try {
+
+                                        if (
+                                            !progress
+                                        ) {
+                                            return;
+                                        }
+
+
+                                        const file =
+                                            progress.file ||
+                                            progress.name ||
+                                            "";
+
+
+                                        const percent =
+                                            typeof progress.progress ===
+                                                "number"
+                                                ? Math.round(
+                                                    progress.progress
+                                                )
+                                                : null;
+
+
+                                        if (
+                                            percent !== null
+                                        ) {
+
+                                            status(
+                                                "Baixando " +
+                                                percent +
+                                                "% " +
+                                                file
+                                            );
+
+                                        } else if (
+                                            file
+                                        ) {
+
+                                            status(
+                                                "Baixando: " +
+                                                file
+                                            );
+
+                                        } else {
+
+                                            status(
+                                                "Baixando modelo..."
+                                            );
+                                        }
+
+                                    } catch (error) {
+
+                                        console.error(
+                                            "Erro no progresso:",
+                                            error
+                                        );
+
+                                    }
+                                }
                         }
                     );
 
 
                 loading = false;
+
+
+                status(
+                    "Modelo carregado"
+                );
 
 
                 self.postMessage({
@@ -86,7 +165,7 @@ self.onmessage =
 
 
             /* ==================================================
-               GERAR RESPOSTA
+               GERAR
                ================================================== */
 
             if (
@@ -112,10 +191,9 @@ self.onmessage =
                 }
 
 
-                self.postMessage({
-                    type: "status",
-                    text: "Pensando..."
-                });
+                status(
+                    "Pensando..."
+                );
 
 
                 const messages = [
@@ -237,6 +315,13 @@ self.onmessage =
 
                 });
 
+
+                status(
+                    "Online"
+                );
+
+
+                return;
             }
 
         } catch (error) {
@@ -259,4 +344,5 @@ self.onmessage =
             });
 
         }
+
     };
