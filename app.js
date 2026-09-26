@@ -6,6 +6,13 @@ import {
 const MODEL =
     "onnx-community/Qwen2.5-0.5B-Instruct";
 
+/*
+ * Configuração conservadora para Android.
+ *
+ * q8 é usado deliberadamente para evitar possíveis erros
+ * de qualidade/inferência do model_q4.onnx em determinados
+ * runtimes WASM do Chrome Android.
+ */
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
 
@@ -37,8 +44,6 @@ Não escreva palavras inventadas.
 
 Não misture idiomas.
 
-Não fique repetindo a mesma palavra.
-
 Não copie a mensagem do usuário.
 
 Não invente informações.
@@ -69,13 +74,47 @@ const clearButton =
 const status =
     document.getElementById("status");
 
-let memory = JSON.parse(
-    localStorage.getItem("luna_memory") || "{}"
-);
+let memory = {};
 
-let history = JSON.parse(
-    localStorage.getItem("luna_history") || "[]"
-);
+let history = [];
+
+try {
+    memory = JSON.parse(
+        localStorage.getItem("luna_memory") || "{}"
+    );
+
+    if (
+        !memory ||
+        typeof memory !== "object" ||
+        Array.isArray(memory)
+    ) {
+        memory = {};
+    }
+} catch (error) {
+    console.warn(
+        "Memória local inválida. Ela será reiniciada.",
+        error
+    );
+
+    memory = {};
+}
+
+try {
+    history = JSON.parse(
+        localStorage.getItem("luna_history") || "[]"
+    );
+
+    if (!Array.isArray(history)) {
+        history = [];
+    }
+} catch (error) {
+    console.warn(
+        "Histórico local inválido. Ele será reiniciado.",
+        error
+    );
+
+    history = [];
+}
 
 function saveMemory() {
     localStorage.setItem(
@@ -102,7 +141,8 @@ function addMessage(text, type) {
     element.className =
         "message " + type;
 
-    element.textContent = text;
+    element.textContent =
+        String(text || "");
 
     chat.appendChild(element);
 
@@ -114,6 +154,13 @@ function addMessage(text, type) {
 
 function loadHistory() {
     for (const message of history) {
+        if (
+            !message ||
+            typeof message.content !== "string"
+        ) {
+            continue;
+        }
+
         addMessage(
             message.content,
             message.role === "user"
@@ -159,6 +206,14 @@ function progressCallback(progress) {
         setStatus(
             "Finalizando..."
         );
+
+        return;
+    }
+
+    if (progress.status === "ready") {
+        setStatus(
+            "Preparando inferência..."
+        );
     }
 }
 
@@ -178,14 +233,22 @@ async function loadModel() {
                 MODEL,
                 {
                     device: "wasm",
-                    dtype: "q4",
+
+                    /*
+                     * q8 é intencional.
+                     *
+                     * Use q4 somente depois de confirmar que
+                     * q8 produz texto normal neste aparelho.
+                     */
+                    dtype: "q8",
+
                     progress_callback:
                         progressCallback
                 }
             );
 
         setStatus(
-            "Online - CPU"
+            "Online - CPU WASM q8"
         );
 
         addMessage(
@@ -195,7 +258,7 @@ async function loadModel() {
 
     } catch (error) {
         console.error(
-            "ERRO COMPLETO:",
+            "ERRO COMPLETO AO CARREGAR O MODELO:",
             error
         );
 
@@ -205,20 +268,10 @@ async function loadModel() {
             "Erro ao carregar IA"
         );
 
-        let errorText =
-            "Erro desconhecido";
-
-        if (
-            error &&
-            error.message
-        ) {
-            errorText =
-                error.message;
-        } else if (
-            typeof error === "string"
-        ) {
-            errorText = error;
-        }
+        const errorText =
+            error && error.message
+                ? error.message
+                : String(error || "Erro desconhecido");
 
         addMessage(
             "ERRO REAL:\n\n" +
@@ -228,24 +281,142 @@ async function loadModel() {
     }
 }
 
+function extractAnswer(output) {
+    if (
+        !output ||
+        !Array.isArray(output) ||
+        !output[0]
+    ) {
+        return "";
+    }
+
+    const generated =
+        output[0].generated_text;
+
+    /*
+     * Quando a entrada é uma lista de mensagens,
+     * o Transformers.js retorna um Chat:
+     *
+     * [
+     *   { role: "system", content: "..." },
+     *   { role: "user", content: "..." },
+     *   { role: "assistant", content: "..." }
+     * ]
+     */
+    if (Array.isArray(generated)) {
+        const assistantMessages =
+            generated.filter(
+                message =>
+                    message &&
+                    message.role === "assistant" &&
+                    typeof message.content === "string"
+            );
+
+        if (assistantMessages.length > 0) {
+            return assistantMessages[
+                assistantMessages.length - 1
+            ].content.trim();
+        }
+
+        const last =
+            generated[generated.length - 1];
+
+        if (
+            last &&
+            typeof last.content === "string"
+        ) {
+            return last.content.trim();
+        }
+
+        if (
+            typeof last === "string"
+        ) {
+            return last.trim();
+        }
+
+        return "";
+    }
+
+    if (typeof generated === "string") {
+        return generated.trim();
+    }
+
+    return "";
+}
+
 function cleanAnswer(text) {
     if (!text) {
         return "";
     }
 
-    text = text.trim();
+    let answer =
+        String(text).trim();
 
-    text = text.replace(
-        /^assistant\s*:\s*/i,
-        ""
-    );
+    answer =
+        answer.replace(
+            /^assistant\s*:\s*/i,
+            ""
+        );
 
-    text = text.replace(
-        /^luna\s*:\s*/i,
-        ""
-    );
+    answer =
+        answer.replace(
+            /^luna\s*:\s*/i,
+            ""
+        );
 
-    return text.trim();
+    answer =
+        answer.replace(
+            /<\|im_end\|>[\s\S]*$/g,
+            ""
+        );
+
+    answer =
+        answer.replace(
+            /<\|endoftext\|>[\s\S]*$/g,
+            ""
+        );
+
+    return answer.trim();
+}
+
+function buildMessages() {
+    const memoryText =
+        Object.keys(memory).length > 0
+            ? JSON.stringify(memory)
+            : "Nenhuma memória salva.";
+
+    /*
+     * O histórico já contém a mensagem atual do usuário.
+     * Limitar o contexto evita crescimento excessivo no Android.
+     */
+    const recentHistory =
+        history
+            .filter(
+                message =>
+                    message &&
+                    (
+                        message.role === "user" ||
+                        message.role === "assistant"
+                    ) &&
+                    typeof message.content === "string"
+            )
+            .slice(-8);
+
+    return [
+        {
+            role: "system",
+            content:
+                PERSONALITY +
+                `
+
+Memória da Luna:
+${memoryText}
+
+Agora responda apenas ao usuário.
+`
+        },
+        ...recentHistory
+    ];
 }
 
 async function generate(userMessage) {
@@ -259,6 +430,7 @@ async function generate(userMessage) {
     generating = true;
 
     sendButton.disabled = true;
+    input.disabled = true;
 
     history.push({
         role: "user",
@@ -267,30 +439,8 @@ async function generate(userMessage) {
 
     saveHistory();
 
-    const memoryText =
-        Object.keys(memory).length > 0
-            ? JSON.stringify(memory)
-            : "Nenhuma memória salva.";
-
-    const recentHistory =
-        history.slice(-8);
-
-    const messages = [
-        {
-            role: "system",
-            content:
-                PERSONALITY +
-                `
-
-Memória da Luna:
-
-${memoryText}
-
-Agora responda apenas ao usuário.
-`
-        },
-        ...recentHistory
-    ];
+    const messages =
+        buildMessages();
 
     const thinking =
         addMessage(
@@ -299,61 +449,37 @@ Agora responda apenas ao usuário.
         );
 
     try {
+        /*
+         * O template oficial do tokenizer Qwen é aplicado
+         * automaticamente porque a entrada é uma lista de
+         * mensagens.
+         */
         const output =
             await generator(
                 messages,
                 {
                     max_new_tokens: 100,
-                    temperature: 0.7,
-                    do_sample: true,
-                    repetition_penalty: 1.1,
-                    top_k: 20,
-                    top_p: 0.8
+
+                    /*
+                     * Greedy decoding para diagnosticar
+                     * modelo/tokenizer/backend sem ruído
+                     * adicional de amostragem.
+                     */
+                    do_sample: false,
+
+                    return_full_text: false,
+
+                    eos_token_id: [
+                        151645,
+                        151643
+                    ],
+
+                    pad_token_id: 151643
                 }
             );
 
-        let answer = "";
-
-        if (
-            output &&
-            output[0]
-        ) {
-            const generated =
-                output[0]
-                    .generated_text;
-
-            if (
-                Array.isArray(
-                    generated
-                )
-            ) {
-                const last =
-                    generated[
-                        generated.length - 1
-                    ];
-
-                if (
-                    last &&
-                    typeof last.content ===
-                        "string"
-                ) {
-                    answer =
-                        last.content;
-                } else if (
-                    typeof last ===
-                        "string"
-                ) {
-                    answer =
-                        last;
-                }
-            } else if (
-                typeof generated ===
-                    "string"
-            ) {
-                answer =
-                    generated;
-            }
-        }
+        let answer =
+            extractAnswer(output);
 
         answer =
             cleanAnswer(answer);
@@ -385,29 +511,29 @@ Agora responda apenas ao usuário.
 
         thinking.remove();
 
-        let errorText =
-            "Erro desconhecido";
-
-        if (
-            error &&
-            error.message
-        ) {
-            errorText =
-                error.message;
-        }
+        const errorText =
+            error && error.message
+                ? error.message
+                : String(error || "Erro desconhecido");
 
         addMessage(
             "ERRO AO RESPONDER:\n\n" +
             errorText,
             "ai"
         );
+
+        /*
+         * A mensagem do usuário permanece no histórico,
+         * mas nenhuma resposta falsa é adicionada.
+         */
+    } finally {
+        generating = false;
+
+        sendButton.disabled = false;
+        input.disabled = false;
+
+        input.focus();
     }
-
-    generating = false;
-
-    sendButton.disabled = false;
-
-    input.focus();
 }
 
 sendButton.addEventListener(
@@ -464,6 +590,12 @@ clearButton.addEventListener(
         saveHistory();
 
         chat.innerHTML = "";
+
+        setStatus(
+            generator
+                ? "Online - CPU WASM q8"
+                : "Modelo não carregado"
+        );
     }
 );
 
