@@ -18,7 +18,7 @@
 
     <link
         rel="stylesheet"
-        href="style.css?v=20"
+        href="style.css?v=21"
     >
 </head>
 
@@ -26,17 +26,12 @@
 
     <header class="app-header">
 
-        <div
-            class="brand"
-            aria-live="polite"
-        >
+        <div class="brand">
 
-            <strong>
-                Luna AI
-            </strong>
+            <strong>Luna AI</strong>
 
             <small id="status">
-                Iniciando...
+                Testando app.js...
             </small>
 
         </div>
@@ -83,21 +78,42 @@
     </section>
 
 
-    <!-- TESTE: confirma que o HTML e o JavaScript estão sendo carregados -->
+    <script type="module">
 
-    <script>
-        const statusTeste =
+        const status =
             document.getElementById("status");
 
-        statusTeste.textContent =
-            "JS funcionando";
+        status.textContent =
+            "INDEX OK v21";
+
+        try {
+
+            await import("./app.js?v=21");
+
+        } catch (error) {
+
+            status.textContent =
+                "ERRO APP.JS";
+
+            const chat =
+                document.getElementById("chat");
+
+            const mensagem =
+                document.createElement("div");
+
+            mensagem.className =
+                "message ai";
+
+            mensagem.textContent =
+                "ERRO AO CARREGAR APP.JS:\n\n" +
+                (error?.message || error);
+
+            chat.appendChild(mensagem);
+
+            console.error(error);
+        }
+
     </script>
-
-
-    <script
-        type="module"
-        src="app.js?v=20"
-    ></script>
 
 </body>
 
