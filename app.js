@@ -7,11 +7,11 @@ const MODEL =
     "onnx-community/Qwen2.5-0.5B-Instruct";
 
 /*
- * Configuração conservadora para Android.
+ * Configuração conservadora para Chrome Android.
  *
- * q8 é usado deliberadamente para evitar possíveis erros
- * de qualidade/inferência do model_q4.onnx em determinados
- * runtimes WASM do Chrome Android.
+ * Uma thread evita a multiplicação de buffers e o pico de RAM
+ * que pode ocorrer com WASM multithread em aparelhos móveis.
+ * O modelo é carregado somente uma vez e permanece em memória.
  */
 env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.proxy = false;
@@ -30,142 +30,115 @@ Sua personalidade:
 - paciente
 
 Regras importantes:
-
-Responda sempre em português brasileiro.
-
-Use palavras normais e frases naturais.
-
-Se o usuário fizer uma pergunta simples,
-responda de forma simples.
-
-Não repita palavras ou frases sem necessidade.
-
-Não escreva palavras inventadas.
-
-Não misture idiomas.
-
-Não copie a mensagem do usuário.
-
-Não invente informações.
-
-Se não souber algo, diga que não sabe.
-
-Não fale sobre seu funcionamento interno,
-a menos que o usuário pergunte.
-
-Você não é uma pessoa humana.
+- Responda sempre em português brasileiro.
+- Use palavras normais e frases naturais.
+- Se a pergunta for simples, responda de forma simples.
+- Não repita palavras ou frases sem necessidade.
+- Não escreva palavras inventadas.
+- Não misture idiomas.
+- Não copie a mensagem do usuário.
+- Não invente informações.
+- Se não souber algo, diga que não sabe.
+- Não fale sobre seu funcionamento interno, a menos que o usuário pergunte.
+- Você não é uma pessoa humana.
 `;
 
+/* Limites deliberados para o hardware móvel. */
+const MAX_GENERATED_TOKENS = 64;
+const MAX_CONTEXT_CHARS = 6000;
+const MAX_MEMORY_CHARS = 1200;
+const MAX_SAVED_HISTORY_ITEMS = 200;
+
 let generator = null;
+let modelLoading = false;
 let generating = false;
 
-const chat =
-    document.getElementById("chat");
+const chat = document.getElementById("chat");
+const input = document.getElementById("messageInput");
+const sendButton = document.getElementById("sendButton");
+const clearButton = document.getElementById("clearButton");
+const status = document.getElementById("status");
 
-const input =
-    document.getElementById("messageInput");
+let memory = readJson("luna_memory", {});
+let history = readJson("luna_history", []);
 
-const sendButton =
-    document.getElementById("sendButton");
-
-const clearButton =
-    document.getElementById("clearButton");
-
-const status =
-    document.getElementById("status");
-
-let memory = {};
-
-let history = [];
-
-try {
-    memory = JSON.parse(
-        localStorage.getItem("luna_memory") || "{}"
-    );
-
-    if (
-        !memory ||
-        typeof memory !== "object" ||
-        Array.isArray(memory)
-    ) {
-        memory = {};
-    }
-} catch (error) {
-    console.warn(
-        "Memória local inválida. Ela será reiniciada.",
-        error
-    );
-
+if (!memory || typeof memory !== "object" || Array.isArray(memory)) {
     memory = {};
 }
 
-try {
-    history = JSON.parse(
-        localStorage.getItem("luna_history") || "[]"
-    );
-
-    if (!Array.isArray(history)) {
-        history = [];
-    }
-} catch (error) {
-    console.warn(
-        "Histórico local inválido. Ele será reiniciado.",
-        error
-    );
-
+if (!Array.isArray(history)) {
     history = [];
 }
 
-function saveMemory() {
-    localStorage.setItem(
-        "luna_memory",
-        JSON.stringify(memory)
-    );
-}
+function readJson(key, fallback) {
+    try {
+        const value = JSON.parse(
+            localStorage.getItem(key) || JSON.stringify(fallback)
+        );
 
-function saveHistory() {
-    localStorage.setItem(
-        "luna_history",
-        JSON.stringify(history)
-    );
+        return value;
+    } catch (error) {
+        console.warn(`Dados locais inválidos em ${key}.`, error);
+        return fallback;
+    }
 }
 
 function setStatus(text) {
     status.textContent = text;
 }
 
+function saveMemory() {
+    try {
+        localStorage.setItem(
+            "luna_memory",
+            JSON.stringify(memory)
+        );
+    } catch (error) {
+        console.warn("Não foi possível salvar a memória local.", error);
+    }
+}
+
+function saveHistory() {
+    /*
+     * O histórico completo continua local, mas é limitado para evitar
+     * que localStorage cresça indefinidamente e cause serializações
+     * grandes a cada envio.
+     */
+    if (history.length > MAX_SAVED_HISTORY_ITEMS) {
+        history = history.slice(-MAX_SAVED_HISTORY_ITEMS);
+    }
+
+    try {
+        localStorage.setItem(
+            "luna_history",
+            JSON.stringify(history)
+        );
+    } catch (error) {
+        console.warn("Não foi possível salvar o histórico local.", error);
+    }
+}
+
 function addMessage(text, type) {
-    const element =
-        document.createElement("div");
+    const element = document.createElement("div");
 
-    element.className =
-        "message " + type;
-
-    element.textContent =
-        String(text || "");
+    element.className = `message ${type}`;
+    element.textContent = String(text || "");
 
     chat.appendChild(element);
-
-    chat.scrollTop =
-        chat.scrollHeight;
+    chat.scrollTop = chat.scrollHeight;
 
     return element;
 }
 
 function loadHistory() {
     for (const message of history) {
-        if (
-            !message ||
-            typeof message.content !== "string"
-        ) {
+        if (!message || typeof message.content !== "string") {
             continue;
         }
 
         addMessage(
             message.content,
-            message.role === "user"
-                ? "user"
-                : "ai"
+            message.role === "user" ? "user" : "ai"
         );
     }
 }
@@ -176,172 +149,174 @@ function progressCallback(progress) {
     }
 
     if (progress.status === "initiate") {
-        setStatus(
-            "Iniciando download..."
-        );
-
+        setStatus("Iniciando download...");
         return;
     }
 
     if (progress.status === "progress") {
-        const value =
-            Number(progress.progress);
+        const value = Number(progress.progress);
 
-        if (Number.isFinite(value)) {
-            setStatus(
-                "Baixando IA... " +
-                Math.round(value) +
-                "%"
-            );
-        } else {
-            setStatus(
-                "Baixando IA..."
-            );
-        }
+        setStatus(
+            Number.isFinite(value)
+                ? `Baixando IA... ${Math.round(value)}%`
+                : "Baixando IA..."
+        );
 
         return;
     }
 
     if (progress.status === "done") {
-        setStatus(
-            "Finalizando..."
-        );
-
-        return;
-    }
-
-    if (progress.status === "ready") {
-        setStatus(
-            "Preparando inferência..."
-        );
+        setStatus("Finalizando...");
     }
 }
 
 async function loadModel() {
-    setStatus(
-        "Preparando IA..."
-    );
+    if (generator || modelLoading) {
+        return;
+    }
+
+    modelLoading = true;
+    setStatus("Preparando IA...");
 
     try {
-        setStatus(
-            "Iniciando Luna pela CPU..."
+        setStatus("Iniciando Luna pela CPU...");
+
+        generator = await pipeline(
+            "text-generation",
+            MODEL,
+            {
+                device: "wasm",
+                dtype: "q8",
+                progress_callback: progressCallback
+            }
         );
 
-        generator =
-            await pipeline(
-                "text-generation",
-                MODEL,
-                {
-                    device: "wasm",
-
-                    /*
-                     * q8 é intencional.
-                     *
-                     * Use q4 somente depois de confirmar que
-                     * q8 produz texto normal neste aparelho.
-                     */
-                    dtype: "q8",
-
-                    progress_callback:
-                        progressCallback
-                }
-            );
-
-        setStatus(
-            "Online - CPU WASM q8"
-        );
-
-        addMessage(
-            "Luna está online.",
-            "ai"
-        );
-
+        setStatus("Online - CPU WASM q8");
+        addMessage("Luna está online.", "ai");
     } catch (error) {
-        console.error(
-            "ERRO COMPLETO AO CARREGAR O MODELO:",
-            error
-        );
+        console.error("ERRO COMPLETO AO CARREGAR O MODELO:", error);
 
         generator = null;
-
-        setStatus(
-            "Erro ao carregar IA"
-        );
-
-        const errorText =
-            error && error.message
-                ? error.message
-                : String(error || "Erro desconhecido");
+        setStatus("Erro ao carregar IA");
 
         addMessage(
-            "ERRO REAL:\n\n" +
-            errorText,
+            `ERRO REAL:\n\n${getErrorText(error)}`,
             "ai"
         );
+    } finally {
+        modelLoading = false;
     }
 }
 
-function extractAnswer(output) {
-    if (
-        !output ||
-        !Array.isArray(output) ||
-        !output[0]
-    ) {
-        return "";
+function getErrorText(error) {
+    if (error && error.message) {
+        return error.message;
     }
 
-    const generated =
-        output[0].generated_text;
+    return String(error || "Erro desconhecido");
+}
 
+function getMemoryText() {
+    let text;
+
+    try {
+        text = JSON.stringify(memory);
+    } catch (error) {
+        text = "{}";
+    }
+
+    if (!text || text === "{}") {
+        return "Nenhuma memória salva.";
+    }
+
+    return text.slice(0, MAX_MEMORY_CHARS);
+}
+
+function isValidChatMessage(message) {
+    return Boolean(
+        message &&
+        (message.role === "user" || message.role === "assistant") &&
+        typeof message.content === "string" &&
+        message.content.trim()
+    );
+}
+
+function getPromptHistory() {
     /*
-     * Quando a entrada é uma lista de mensagens,
-     * o Transformers.js retorna um Chat:
-     *
-     * [
-     *   { role: "system", content: "..." },
-     *   { role: "user", content: "..." },
-     *   { role: "assistant", content: "..." }
-     * ]
+     * O histórico local não é apagado. Apenas uma janela curta é enviada
+     * ao modelo para impedir que o prompt e o KV cache cresçam a cada turno.
+     * O limite é por caracteres, uma aproximação segura para tokens.
      */
+    const selected = [];
+    let usedChars = 0;
+
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+        const message = history[index];
+
+        if (!isValidChatMessage(message)) {
+            continue;
+        }
+
+        const content = message.content.trim();
+        const cost = content.length + 40;
+
+        if (
+            selected.length > 0 &&
+            usedChars + cost > MAX_CONTEXT_CHARS
+        ) {
+            break;
+        }
+
+        selected.push({
+            role: message.role,
+            content: content
+        });
+
+        usedChars += cost;
+    }
+
+    return selected.reverse();
+}
+
+function buildMessages() {
+    return [
+        {
+            role: "system",
+            content:
+                `${PERSONALITY}\n\n` +
+                `Memória da Luna:\n${getMemoryText()}\n\n` +
+                "Responda apenas à última mensagem do usuário."
+        },
+        ...getPromptHistory()
+    ];
+}
+
+function extractAnswer(output) {
+    if (!output || !Array.isArray(output) || !output[0]) {
+        return "";
+    }
+
+    const generated = output[0].generated_text;
+
     if (Array.isArray(generated)) {
-        const assistantMessages =
-            generated.filter(
-                message =>
-                    message &&
-                    message.role === "assistant" &&
-                    typeof message.content === "string"
-            );
+        for (let index = generated.length - 1; index >= 0; index -= 1) {
+            const message = generated[index];
 
-        if (assistantMessages.length > 0) {
-            return assistantMessages[
-                assistantMessages.length - 1
-            ].content.trim();
-        }
-
-        const last =
-            generated[generated.length - 1];
-
-        if (
-            last &&
-            typeof last.content === "string"
-        ) {
-            return last.content.trim();
-        }
-
-        if (
-            typeof last === "string"
-        ) {
-            return last.trim();
+            if (
+                message &&
+                message.role === "assistant" &&
+                typeof message.content === "string"
+            ) {
+                return message.content.trim();
+            }
         }
 
         return "";
     }
 
-    if (typeof generated === "string") {
-        return generated.trim();
-    }
-
-    return "";
+    return typeof generated === "string"
+        ? generated.trim()
+        : "";
 }
 
 function cleanAnswer(text) {
@@ -349,86 +324,21 @@ function cleanAnswer(text) {
         return "";
     }
 
-    let answer =
-        String(text).trim();
-
-    answer =
-        answer.replace(
-            /^assistant\s*:\s*/i,
-            ""
-        );
-
-    answer =
-        answer.replace(
-            /^luna\s*:\s*/i,
-            ""
-        );
-
-    answer =
-        answer.replace(
-            /<\|im_end\|>[\s\S]*$/g,
-            ""
-        );
-
-    answer =
-        answer.replace(
-            /<\|endoftext\|>[\s\S]*$/g,
-            ""
-        );
-
-    return answer.trim();
-}
-
-function buildMessages() {
-    const memoryText =
-        Object.keys(memory).length > 0
-            ? JSON.stringify(memory)
-            : "Nenhuma memória salva.";
-
-    /*
-     * O histórico já contém a mensagem atual do usuário.
-     * Limitar o contexto evita crescimento excessivo no Android.
-     */
-    const recentHistory =
-        history
-            .filter(
-                message =>
-                    message &&
-                    (
-                        message.role === "user" ||
-                        message.role === "assistant"
-                    ) &&
-                    typeof message.content === "string"
-            )
-            .slice(-8);
-
-    return [
-        {
-            role: "system",
-            content:
-                PERSONALITY +
-                `
-
-Memória da Luna:
-${memoryText}
-
-Agora responda apenas ao usuário.
-`
-        },
-        ...recentHistory
-    ];
+    return String(text)
+        .replace(/^assistant\s*:\s*/i, "")
+        .replace(/^luna\s*:\s*/i, "")
+        .replace(/<\|im_end\|>[\s\S]*$/g, "")
+        .replace(/<\|endoftext\|>[\s\S]*$/g, "")
+        .trim();
 }
 
 async function generate(userMessage) {
-    if (
-        !generator ||
-        generating
-    ) {
+    /* Guarda contra cliques rápidos e chamadas simultâneas. */
+    if (!generator || generating || modelLoading) {
         return;
     }
 
     generating = true;
-
     sendButton.disabled = true;
     input.disabled = true;
 
@@ -439,62 +349,30 @@ async function generate(userMessage) {
 
     saveHistory();
 
-    const messages =
-        buildMessages();
-
-    const thinking =
-        addMessage(
-            "Pensando...",
-            "ai"
-        );
+    const thinking = addMessage("Pensando...", "ai");
+    let output = null;
 
     try {
         /*
-         * O template oficial do tokenizer Qwen é aplicado
-         * automaticamente porque a entrada é uma lista de
-         * mensagens.
+         * O modelo é reutilizado. Ele não é carregado novamente aqui.
+         * O chat template oficial do Qwen é aplicado pelo tokenizer.
          */
-        const output =
-            await generator(
-                messages,
-                {
-                    max_new_tokens: 100,
+        output = await generator(
+            buildMessages(),
+            {
+                max_new_tokens: MAX_GENERATED_TOKENS,
+                do_sample: false,
+                return_full_text: false,
+                eos_token_id: [151645, 151643],
+                pad_token_id: 151643
+            }
+        );
 
-                    /*
-                     * Greedy decoding para diagnosticar
-                     * modelo/tokenizer/backend sem ruído
-                     * adicional de amostragem.
-                     */
-                    do_sample: false,
-
-                    return_full_text: false,
-
-                    eos_token_id: [
-                        151645,
-                        151643
-                    ],
-
-                    pad_token_id: 151643
-                }
-            );
-
-        let answer =
-            extractAnswer(output);
-
-        answer =
-            cleanAnswer(answer);
-
-        if (!answer) {
-            answer =
-                "Não consegui gerar uma resposta.";
-        }
+        const answer = cleanAnswer(extractAnswer(output)) ||
+            "Não consegui gerar uma resposta.";
 
         thinking.remove();
-
-        addMessage(
-            answer,
-            "ai"
-        );
+        addMessage(answer, "ai");
 
         history.push({
             role: "assistant",
@@ -502,106 +380,78 @@ async function generate(userMessage) {
         });
 
         saveHistory();
-
     } catch (error) {
-        console.error(
-            "ERRO AO RESPONDER:",
-            error
-        );
+        console.error("ERRO AO RESPONDER:", error);
 
         thinking.remove();
-
-        const errorText =
-            error && error.message
-                ? error.message
-                : String(error || "Erro desconhecido");
-
         addMessage(
-            "ERRO AO RESPONDER:\n\n" +
-            errorText,
+            `ERRO AO RESPONDER:\n\n${getErrorText(error)}`,
             "ai"
         );
-
-        /*
-         * A mensagem do usuário permanece no histórico,
-         * mas nenhuma resposta falsa é adicionada.
-         */
     } finally {
+        /*
+         * Não chamar dispose() aqui: isso destruiria os pesos do modelo
+         * e obrigaria um novo carregamento. Apenas removemos a referência
+         * ao resultado temporário para facilitar a coleta de lixo.
+         */
+        output = null;
         generating = false;
-
         sendButton.disabled = false;
         input.disabled = false;
-
         input.focus();
     }
 }
 
-sendButton.addEventListener(
-    "click",
-    async () => {
-        const message =
-            input.value.trim();
+sendButton.addEventListener("click", async () => {
+    const message = input.value.trim();
 
-        if (!message) {
-            return;
-        }
+    if (!message || generating || modelLoading) {
+        return;
+    }
 
-        if (!generator) {
-            addMessage(
-                "A Luna ainda não terminou de carregar.",
-                "ai"
-            );
-
-            return;
-        }
-
-        input.value = "";
-
+    if (!generator) {
         addMessage(
-            message,
-            "user"
+            "A Luna ainda não terminou de carregar.",
+            "ai"
         );
-
-        await generate(
-            message
-        );
+        return;
     }
-);
 
-input.addEventListener(
-    "keydown",
-    event => {
-        if (
-            event.key === "Enter" &&
-            !event.shiftKey
-        ) {
-            event.preventDefault();
+    input.value = "";
+    addMessage(message, "user");
 
-            sendButton.click();
-        }
+    await generate(message);
+});
+
+input.addEventListener("keydown", event => {
+    if (
+        event.key === "Enter" &&
+        !event.shiftKey &&
+        !generating
+    ) {
+        event.preventDefault();
+        sendButton.click();
     }
-);
+});
 
-clearButton.addEventListener(
-    "click",
-    () => {
-        history = [];
-
-        saveHistory();
-
-        chat.innerHTML = "";
-
-        setStatus(
-            generator
-                ? "Online - CPU WASM q8"
-                : "Modelo não carregado"
-        );
+clearButton.addEventListener("click", () => {
+    if (generating) {
+        return;
     }
-);
+
+    history = [];
+    saveHistory();
+    chat.innerHTML = "";
+
+    setStatus(
+        generator
+            ? "Online - CPU WASM q8"
+            : "Modelo não carregado"
+    );
+});
 
 async function start() {
     loadHistory();
-
     await loadModel();
 }
 
