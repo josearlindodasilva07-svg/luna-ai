@@ -1,5 +1,5 @@
 const MODEL =
-    "onnx-community/Qwen2.5-0.5B-Instruct";
+    "onnx-community/Qwen2-0.5B-Instruct-ONNX";
 
 const TRANSFORMERS_URL =
     "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2";
@@ -259,7 +259,7 @@ const workerSource = `
 
                 self.postMessage({
                     type: "ready",
-                    backend: "WASM worker q8 / Qwen2.5"
+                    backend: "WASM worker q8 / Qwen2"
                 });
             } catch (error) {
                 self.postMessage({
